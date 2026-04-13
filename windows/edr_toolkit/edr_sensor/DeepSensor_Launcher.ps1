@@ -860,14 +860,17 @@ try {
                                 continue
                             }
 
+                            # TEMPORAL UEBA FEEDBACK LOOP
                             if ($alert.score -eq -1.0) {
                                 Add-AlertMessage $alert.reason $cDark
                                 $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
                                 $script:logBatch.Add($logObj)
 
-                                # Extract the pure rule name and inject it into the C# unmanaged memory block
-                                # Reason format: "UEBA SECURED: UAC Bypass Using Iscsicpl - ImageLoad | Mode: Automated Baseline."
+                                # Extract the pure rule name from the Rust reason
+                                # Format: "UEBA SECURED: [T1547.001] RegPersistence | Mode: Automated Baseline."
                                 $ruleName = $alert.reason -replace "^UEBA SECURED: ", "" -replace " \| Mode:.*", ""
+
+                                # INJECT INTO C# UNMANAGED MEMORY DICTIONARY
                                 try { [DeepVisibilitySensor]::SuppressProcessRule($alert.process, $ruleName) } catch {}
                                 continue
                             }
@@ -886,7 +889,30 @@ try {
                             }
 
                             if ($alert.severity -match "CRITICAL|HIGH|WARNING") {
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"ValidatedAlert`", `"Type`":`"ThreatDetection`", `"Process`":`"$($alert.process)`", `"PID`":$($alert.pid), `"TID`":$($alert.tid), `"Score`":$($alert.score), `"Severity`":`"$($alert.severity)`", `"Confidence`":$($alert.confidence), `"Details`":`"$($alert.reason)`"}"
+                                $MitreTag = "Unknown"
+                                # 1. Look for bracketed Sigma/Rust tags (e.g., [T1003.001])
+                                if ($alert.reason -match "\[(.*?)\]") {
+                                    $MitreTag = $matches[1]
+                                }
+                                # 2. Fallback: Catch C#-injected categories (e.g., T1562.002: Attempted to...)
+                                elseif ($alert.reason -match "^(T\d{4}(?:\.\d{3})?)") {
+                                    $MitreTag = $matches[1]
+                                }
+
+                                $logObj = "{$global:EnrichmentPrefix" +
+                                    "`"Category`":`"ValidatedAlert`", " +
+                                    "`"Mitre`":`"$MitreTag`", " +
+                                    "`"Type`":`"ThreatDetection`", " +
+                                    "`"Process`":`"$($alert.process)`", " +
+                                    "`"ParentProcess`":`"$($alert.parent)`", " +
+                                    "`"CommandLine`":`"$($alert.cmd)`", " +
+                                    "`"PID`":$($alert.pid), " +
+                                    "`"TID`":$($alert.tid), " +
+                                    "`"Score`":$([math]::Round($alert.score, 2)), " +
+                                    "`"Severity`":`"$($alert.severity)`", " +
+                                    "`"Confidence`":$($alert.confidence), " +
+                                    "`"Details`":`"$($alert.reason)`"}"
+
                                 $script:logBatch.Add($logObj)
                             }
 

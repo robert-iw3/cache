@@ -182,14 +182,3 @@ In V3, the Ring-0 driver (`endpoint_monitor_driver.sys`) is not just a sensor; i
 
 ### The Developmental Path Forward
 To bridge the gap from the current V2.1 architecture to this V3 Platform, the next logical step is to build the **Unified Config Struct** and the **Time-Series Graph Correlator** in the Rust DLL. This prepares the mathematical brain to accept and correlate the C2 network batches alongside the OS batches.
-
-## High Level Phases
-
-**V3 Ascendancy Roadmap**
-
-* **Phase 1: Foundation Soak (Current)** -> Monitor V2.1 (Native FFI OS Sensor) for absolute stability, memory safety, and ETW drop-rates under extreme stress.
-* **Phase 2: Protection Standardization** -> Optimize, standardize, and harden the Active Defense (Suspend/Dump/Strip) containment cycle to ensure it triggers flawlessly without destabilizing the host.
-* **Phase 3: Sensor Fusion** -> Absorb the C2 Beacon Hunter. Wire the Ring-3 network ETW telemetry into `OsSensor.cs` and merge the DBSCAN clustering logic into the native `lib.rs` DLL.
-* **Phase 4: Unified ML Correlation** -> Link the OS and Network feeds into a single Time-Series Graph Correlator within Rust to achieve cross-modal conviction (Testing & Validation).
-* **Phase 5: Ring-0 Vanguard** -> Inject the `endpoint_monitor_driver.sys` kernel driver. Transition from reactive Ring-3 ETW observation to synchronous Ring-0 WFP/FSFilter interception.
-* **Phase 6: The Nexus Platform (V3)** -> Finalize the Orchestrator Control Plane, linking the Ring-0 telemetry/containment pipeline directly into the Unified ML Engine for true XDR capabilities.

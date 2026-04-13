@@ -46,15 +46,17 @@ struct IncomingEvent {
     tid: i32,
 }
 
-#[derive(Serialize, Debug)]
-struct Alert {
-    process: String,
-    pid: i32,
-    tid: i32,
-    score: f64,
-    confidence: f64,
-    severity: String,
-    reason: String,
+#[derive(Serialize, Debug, Clone)]
+pub struct Alert {
+    pub process: String,
+    pub parent: String,
+    pub cmd: String,
+    pub pid: i32,
+    pub tid: i32,
+    pub score: f64,
+    pub confidence: f64,
+    pub severity: String,
+    pub reason: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -226,7 +228,7 @@ impl BehavioralEngine {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
 
         if evt.event_type == "Synthetic_Health_Check" {
-            alerts.push(Alert { process: "System".to_string(), pid: 0, tid: 0, score: 1.0, confidence: 100.0, severity: "INFO".to_string(), reason: "HEALTH_OK".to_string() });
+            alerts.push(Alert { process: "System".to_string(), parent: "".to_string(), cmd: "".to_string(), pid: 0, tid: 0, score: 1.0, confidence: 100.0, severity: "INFO".to_string(), reason: "HEALTH_OK".to_string() });
             return alerts;
         }
 
@@ -237,14 +239,14 @@ impl BehavioralEngine {
         if evt.event_type == "ProcessStart" || evt.event_type == "RegistryWrite" || evt.event_type == "FileIOCreate" {
             let lsass_keywords = ["procdump", "comsvcs", "mimikatz", "sekurlsa::", "lsadump::", "nanodump", "dumpert"];
             if lsass_keywords.iter().any(|&k| cmd_lower.contains(k)) {
-                alerts.push(Alert { process: proc_lower.clone(), pid: evt.pid, tid: evt.tid, score: 10.0, confidence: 100.0, severity: "CRITICAL".to_string(), reason: "CRITICAL: LSASS Credential Dumping (Static Override)".to_string() });
+                alerts.push(Alert { process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid, score: 10.0, confidence: 100.0, severity: "CRITICAL".to_string(), reason: "[T1003.001] CRITICAL: LSASS Credential Dumping (Static Override)".to_string() });
                 return alerts;
             }
 
             if ["svchost.exe", "explorer.exe", "lsass.exe", "winlogon.exe", "services.exe"].contains(&proc_lower.as_str()) {
                 let injection_keywords = ["virtualalloc", "createremotethread", "writeprocessmemory", "reflective", "processhollow", "inject"];
                 if injection_keywords.iter().any(|&k| cmd_lower.contains(k)) {
-                    alerts.push(Alert { process: proc_lower.clone(), pid: evt.pid, tid: evt.tid, score: 10.0, confidence: 100.0, severity: "CRITICAL".to_string(), reason: "CRITICAL: Reflective Code Injection (Static Override)".to_string() });
+                    alerts.push(Alert { process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid, score: 10.0, confidence: 100.0, severity: "CRITICAL".to_string(), reason: "[T1055] CRITICAL: Reflective Code Injection (Static Override)".to_string() });
                     return alerts;
                 }
             }
@@ -265,23 +267,33 @@ impl BehavioralEngine {
             } else if tracker.count > 50 {
                 let avg_entropy = tracker.entropy_sum / tracker.count as f64;
                 if avg_entropy > 5.2 {
-                    alerts.push(Alert { process: evt.process.clone(), pid: evt.pid, tid: evt.tid, score: avg_entropy, confidence: 95.0, severity: "CRITICAL".to_string(), reason: format!("Ransomware/Wiper Burst: {} I/O ops/sec (Entropy: {:.2})", tracker.count, avg_entropy) });
-                    tracker.count = 1;
+                    alerts.push(Alert {
+                        process: evt.process.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid,
+                        score: avg_entropy, confidence: 95.0, severity: "CRITICAL".to_string(),
+                        reason: format!("[T1486] Ransomware/Wiper Burst: {} I/O ops/sec (Entropy: {:.2})", tracker.count, avg_entropy)
+                    });
+                    tracker.count = 0;
+                    tracker.entropy_sum = 0.0;
                 }
             }
         }
 
-        // UEBA StaticAlert with full audit logging
-        if evt.category == "StaticAlert" {
+        // Route ALL orchestrated alerts (Sigma, TTPs) into the UEBA Temporal Baselining Engine
+        if evt.category != "RawEvent" {
             let rule = if evt.details.contains("Rule:") {
                 evt.details.split("Rule:").nth(1).unwrap_or("").split('[').next().unwrap_or("").trim().to_string()
+            } else if !evt.details.is_empty() {
+                evt.details.clone()
             } else {
                 evt.event_type.clone()
             };
 
+            // Dynamically assign severity based on the incoming MITRE tag / Category
+            let initial_severity = if evt.category.contains("T15") || evt.category.contains("T10") { "CRITICAL" } else { "HIGH" };
+
             self.rule_process_map.entry(rule.clone()).or_insert_with(HashSet::new).insert(proc_lower.clone());
             if self.rule_process_map.get(&rule).unwrap().len() >= 5 {
-                alerts.push(Alert { process: "GLOBAL".to_string(), pid: 0, tid: 0, score: -2.0, confidence: 100.0, severity: "INFO".to_string(), reason: rule });
+                alerts.push(Alert { process: "GLOBAL".to_string(), parent: "".to_string(), cmd: "".to_string(), pid: 0, tid: 0, score: -2.0, confidence: 100.0, severity: "INFO".to_string(), reason: rule });
                 return alerts;
             }
 
@@ -314,16 +326,27 @@ impl BehavioralEngine {
             let is_automated = std_dev < 300.0;
             let trust_threshold = if is_automated { self.suppression_count_min } else { (self.suppression_count_min as f64 * 2.5) as i32 };
 
-            // UEBA Audit Logging
+            // UEBA Audit Logging & Alert Routing
             if b_data.count == 1 {
                 Self::log_ueba_audit("LEARNING", &proc_lower, &rule, 1, 0.0);
             }
+
             if b_data.count < trust_threshold {
                 Self::log_ueba_audit("LEARNING", &proc_lower, &rule, b_data.count, std_dev);
-                alerts.push(Alert { process: proc_lower.clone(), pid: evt.pid, tid: evt.tid, score: 0.0, confidence: 0.0, severity: "INFO".to_string(), reason: format!("{}: {} (Learning: {}/{})", evt.event_type, rule, b_data.count, trust_threshold) });
+                // Return the alert to the SIEM while we learn its behavior
+                alerts.push(Alert {
+                    process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid,
+                    score: 0.0, confidence: 50.0, severity: initial_severity.to_string(),
+                    reason: format!("{}: {} (Learning: {}/{})", evt.category, rule, b_data.count, trust_threshold)
+                });
             } else if b_data.count == trust_threshold {
                 Self::log_ueba_audit("THRESHOLD", &proc_lower, &rule, b_data.count, std_dev);
-                alerts.push(Alert { process: proc_lower.clone(), pid: evt.pid, tid: evt.tid, score: -1.0, confidence: 100.0, severity: "INFO".to_string(), reason: format!("UEBA SECURED: {} | Mode: {} Baseline.", rule, if is_automated { "Automated" } else { "Manual" }) });
+                // Trigger the permanent C# boundary suppression
+                alerts.push(Alert {
+                    process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid,
+                    score: -1.0, confidence: 100.0, severity: "INFO".to_string(),
+                    reason: format!("UEBA SECURED: {} | Mode: {} Baseline.", rule, if is_automated { "Automated" } else { "Manual" })
+                });
             } else {
                 Self::log_ueba_audit("SUPPRESSED", &proc_lower, &rule, b_data.count, std_dev);
             }
@@ -333,18 +356,25 @@ impl BehavioralEngine {
         // ML feature extraction + scoring
         let text_data = format!("{}{}", evt.cmd, evt.path);
         let entropy = Self::shannon_entropy(&text_data);
+        // Track the Parent->Child execution tuple for anomaly scoring
         let pc_tuple = format!("{}->{}", evt.parent.to_lowercase(), proc_lower);
-
         let tuple_count = self.tuple_freq.entry(pc_tuple).or_insert(0);
         *tuple_count += 1;
         let tuple_score = 1.0 / *tuple_count as f64;
         let path_depth = evt.path.chars().filter(|&c| c == '\\').count() as f64;
 
-        if text_data.len() > 50 && entropy > 5.2 && (evt.event_type == "ProcessStart" || evt.event_type == "RegistryWrite") {
+        // ML TUNING: Bypass the static T1027 entropy override if the command line contains structured JSON/Telemetry markers
+        let is_structured_telemetry = cmd_lower.contains("telemetrysession") ||
+                                      cmd_lower.contains("{\"") ||
+                                      cmd_lower.contains("appinsights") ||
+                                      cmd_lower.contains("xmlns=");
+
+        // Only flag T1027 if entropy is high AND it doesn't look like standard developer telemetry
+        if text_data.len() > 50 && entropy > 5.2 && !is_structured_telemetry && (evt.event_type == "ProcessStart" || evt.event_type == "RegistryWrite") {
             alerts.push(Alert {
-                process: proc_lower.clone(), pid: evt.pid, tid: evt.tid, score: entropy, confidence: 85.0,
+                process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid, score: entropy, confidence: 85.0,
                 severity: if entropy > 5.5 { "CRITICAL".to_string() } else { "HIGH".to_string() },
-                reason: format!("T1027: Suspicious packed/encoded payload in {} (Entropy {:.2})", evt.event_type, entropy)
+                reason: format!("[T1027] Suspicious packed/encoded payload in {} (Entropy {:.2})", evt.event_type, entropy)
             });
         }
 
@@ -410,17 +440,17 @@ impl BehavioralEngine {
                     (severity.to_string(), format!("Behavioral Lineage Outlier: Anomalous chain by {}", proc_lower))
                 };
 
-                if final_severity != "INFO" {
-                    alerts.push(Alert {
-                        process: proc_lower,
-                        pid: evt.pid,
-                        tid: evt.tid,
-                        score: score,
-                        confidence,
-                        severity: final_severity,
-                        reason: details
-                    });
-                }
+                alerts.push(Alert {
+                    process: evt.process.clone(),
+                    parent: evt.parent.clone(),
+                    cmd: evt.cmd.clone(),
+                    pid: evt.pid,
+                    tid: evt.tid,
+                    score,
+                    confidence,
+                    severity: final_severity,
+                    reason: details
+                });
             }
         }
         alerts

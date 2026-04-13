@@ -1,7 +1,7 @@
 /********************************************************************************
  * SYSTEM:          Deep Sensor - Host Behavioral / ETW Telemetry Engine
  * COMPONENT:       DeepVisibilitySensor.cs (Unmanaged ETW Listener)
- * VERSION:         2.0
+ * VERSION:         2.1
  * AUTHOR:          Robert Weber
  * * DESCRIPTION:
  * A high-performance, real-time Event Tracing for Windows (ETW) listener compiled
@@ -81,6 +81,39 @@ public class DeepVisibilitySensor {
         public ulong BaseAddress;
         public ulong EndAddress;
     }
+
+    // Dictionary to drop known benign Parent -> Child behaviors instantly at the C# boundary
+    public static ConcurrentDictionary<string, byte> BenignLineages = new ConcurrentDictionary<string, byte>(
+        new Dictionary<string, byte>(StringComparer.OrdinalIgnoreCase) {
+            // Windows Initialization & Core Services
+            { "wininit.exe|services.exe", 0 },
+            { "wininit.exe|lsass.exe", 0 },
+            { "wininit.exe|lsm.exe", 0 },
+
+            // Service Control Manager Spawns
+            { "services.exe|svchost.exe", 0 },
+            { "services.exe|spoolsv.exe", 0 },
+            { "services.exe|msmpeng.exe", 0 },         // Windows Defender
+            { "services.exe|searchindexer.exe", 0 },
+            { "services.exe|officeclicktorun.exe", 0 }, // Office Updates
+            { "services.exe|winmgmt.exe", 0 },
+
+            // Standard Service Host (svchost) Spawns
+            { "svchost.exe|taskhostw.exe", 0 },
+            { "svchost.exe|wmiprvse.exe", 0 },         // WMI Provider Host
+            { "svchost.exe|dllhost.exe", 0 },          // COM Surrogate
+            { "svchost.exe|sppsvc.exe", 0 },           // Software Protection
+            { "svchost.exe|searchprotocolhost.exe", 0 },
+            { "svchost.exe|searchfilterhost.exe", 0 },
+            { "svchost.exe|audiodg.exe", 0 },          // Windows Audio Device Graph
+            { "svchost.exe|smartscreen.exe", 0 },
+
+            // Background / Ambient Noise
+            { "explorer.exe|onedrive.exe", 0 },
+            { "taskeng.exe|taskhostw.exe", 0 }
+        },
+        StringComparer.OrdinalIgnoreCase
+    );
 
     private static ConcurrentDictionary<int, List<ModuleMap>> ProcessModules = new ConcurrentDictionary<int, List<ModuleMap>>();
     public static ConcurrentDictionary<string, byte> SuppressedSigmaRules = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
@@ -235,7 +268,7 @@ public class DeepVisibilitySensor {
                 System.IO.File.WriteAllBytes(dumpPath, buffer);
 
                 if (yaraResult != "NoSignatureMatch") {
-                    EnqueueAlert("T1059", "YaraPayloadAttribution", procName, pid, 0, $"In-Memory Shellcode Identified As: {yaraResult}");
+                    EnqueueAlert("T1059", "YaraPayloadAttribution", procName, "Unknown", pid, 0, 0, "", $"In-Memory Shellcode Identified As: {yaraResult}");
                 }
             }
 
@@ -495,7 +528,7 @@ public class DeepVisibilitySensor {
                                     string cacheKey = $"{procName}|{cleanTitle}";
                                     // Check both Global Suppression and Process-Specific Suppression
                                     if (!SuppressedSigmaRules.ContainsKey(cleanTitle) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
-                                        EnqueueAlert("Sigma_UserMode", "AdvancedDetection", procName, data.ProcessID, data.ThreadID, $"Rule: {fullTitle}");
+                                        EnqueueAlert("Sigma_UserMode", "AdvancedDetection", procName, "Unknown", data.ProcessID, 0, data.ThreadID, dynamicPayload, $"Rule: {fullTitle}");
                                     }
                                 }
                             }
@@ -532,7 +565,7 @@ public class DeepVisibilitySensor {
 
             if (data.FileName.IndexOf(".sys", StringComparison.OrdinalIgnoreCase) >= 0 && data.ProcessID != 4) {
                 if (TiDrivers.Contains(System.IO.Path.GetFileName(data.FileName))) {
-                    EnqueueAlert("T1562.001", "ThreatIntel_Driver", GetProcessName(data.ProcessID), data.ProcessID, data.ThreadID, $"Known vulnerable driver loaded: {data.FileName}");
+                    EnqueueAlert("T1562.001", "ThreatIntel_Driver", GetProcessName(data.ProcessID), "Unknown", data.ProcessID, 0, data.ThreadID, "", $"Known vulnerable driver loaded: {data.FileName}");
                 }
             }
         };
@@ -568,7 +601,7 @@ public class DeepVisibilitySensor {
 
                 string cmd = data.CommandLine;
                 if (cmd.IndexOf("logman", StringComparison.OrdinalIgnoreCase) >= 0 && cmd.IndexOf("stop", StringComparison.OrdinalIgnoreCase) >= 0) {
-                    EnqueueAlert("T1562.002", "ETWTampering", image, data.ProcessID, data.ThreadID, $"Attempted to kill ETW: {cmd}");
+                    EnqueueAlert("T1562.002", "ETWTampering", image, GetProcessName(data.ParentID), data.ProcessID, data.ParentID, data.ThreadID, cmd, $"Attempted to terminate ETW: {cmd}");
                 }
 
                 int cmdMatch = CmdAc.SearchFirst(cmd);
@@ -579,7 +612,7 @@ public class DeepVisibilitySensor {
 
                     string cacheKey = $"{image}|{cleanTitle}";
                     if (!SuppressedSigmaRules.ContainsKey(cleanTitle) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
-                        EnqueueAlert("Sigma_Match", "SigmaDetection", image, data.ProcessID, data.ThreadID, $"Rule: {fullTitle}");
+                        EnqueueAlert("Sigma_Match", "SigmaDetection", image, GetProcessName(data.ParentID), data.ProcessID, data.ParentID, data.ThreadID, cmd, $"Rule: {fullTitle}");
                     }
                 }
 
@@ -615,7 +648,7 @@ public class DeepVisibilitySensor {
             }
 
             if (isPersistence) {
-                EnqueueAlert("T1547.001", "RegPersistence", procLower, data.ProcessID, data.ThreadID, $"Persistence Key: {keyName}");
+                EnqueueAlert("T1547.001", "RegPersistence", procLower, "Unknown", data.ProcessID, 0, data.ThreadID, "", $"Persistence Key: {keyName}");
             }
 
             EnqueueRaw("RegistryWrite", GetProcessName(data.ProcessID), "", keyName, valueName, data.ProcessID, data.ThreadID);
@@ -631,7 +664,7 @@ public class DeepVisibilitySensor {
                 string pipeName = pipeParts.Length > 0 ? pipeParts[pipeParts.Length - 1] : "";
 
                 if (ShannonEntropy(pipeName) > 3.5 || pipeName.Contains("mojo.")) {
-                    EnqueueAlert("T1021.002", "SuspiciousNamedPipe", GetProcessName(data.ProcessID), data.ProcessID, data.ThreadID, $"Pipe: {pipeName}");
+                    EnqueueAlert("T1021.002", "SuspiciousNamedPipe", GetProcessName(data.ProcessID), "Unknown", data.ProcessID, 0, data.ThreadID, "", $"Pipe: {pipeName}");
                 }
             }
 
@@ -650,7 +683,7 @@ public class DeepVisibilitySensor {
                     ulong baseAddr = Convert.ToUInt64(data.PayloadByName("BaseAddress"));
                     ulong regSize  = Convert.ToUInt64(data.PayloadByName("RegionSize"));
                     NeuterAndDumpPayload(data.ProcessID, baseAddr, regSize);
-                    EnqueueAlert("T1562.001", "SensorTampering", "External Threat", data.ProcessID, data.ThreadID, $"RWX Injection caught. Attacking Thread Quarantined: {neutralized}");
+                    EnqueueAlert("T1562.001", "SensorTampering", "External Threat", "Unknown", data.ProcessID, 0, data.ThreadID, "", $"RWX Injection caught. Attacking Thread Quarantined: {neutralized}");
                 }
             }
         };
@@ -692,15 +725,50 @@ public class DeepVisibilitySensor {
         return ProcessCache.ContainsKey(pid) ? ProcessCache[pid] : pid.ToString();
     }
 
-    private static void EnqueueAlert(string mitre, string type, string process, int pid, int tid, string details) {
-    string alertJson = $"{{\"Category\":\"StaticAlert\", \"Mitre\":\"{JsonEscape(mitre)}\", \"Type\":\"{JsonEscape(type)}\", \"Process\":\"{JsonEscape(process)}\", \"PID\":{pid}, \"TID\":{tid}, \"Details\":\"{JsonEscape(details)}\"}}";
+    // EnqueueAlert with Fingerprinting
+    public static void EnqueueAlert(string category, string eventType, string process, string parentProcess, int pid, int parentPid, int tid, string cmdline, string details) {
+        if (_mlEnginePtr == IntPtr.Zero) return;
 
-    EventQueue.Enqueue(alertJson);  // still immediate HUD/SIEM
+        // 1. PRE-ALERT GATEKEEPER: Drop known benign lineages instantly
+        string lineageKey = $"{parentProcess}|{process}";
+        if (BenignLineages.ContainsKey(lineageKey)) return;
 
-    if (!_mlWorkQueue.IsAddingCompleted && _mlEnginePtr != IntPtr.Zero) {
-        _mlWorkQueue.TryAdd(alertJson);  // non-blocking
+        // 2. FINGERPRINTING: Validate known noisy but benign command structures
+        string lowerCmd = cmdline.ToLowerInvariant();
+
+        if (process.Equals("pwsh.exe", StringComparison.OrdinalIgnoreCase)) {
+            // Drop VS Code Editor Services Telemetry
+            if (lowerCmd.Contains("visual studio code host") && lowerCmd.Contains("ms-vscode.powershell")) return;
+        }
+
+        if (process.Equals("microsoft.visualstudio.code.servicecontroller.exe", StringComparison.OrdinalIgnoreCase) ||
+            process.Equals("microsoft.visualstudio.code.servicehost.exe", StringComparison.OrdinalIgnoreCase)) {
+            // Drop VS Code .NET / C# Dev Kit Telemetry
+            if (lowerCmd.Contains("/telemetrysession:") || lowerCmd.Contains("dotnet.projectsystem")) return;
+        }
+
+        if (process.Equals("vssadmin.exe", StringComparison.OrdinalIgnoreCase)) {
+            // Example: Drop authorized backup service volume shadow copies (Add your specific backup cmdline here)
+            if (lowerCmd.Contains("list shadows") && parentProcess.Equals("wbengine.exe", StringComparison.OrdinalIgnoreCase)) return;
+        }
+
+        // 3. ENRICHED FFI JSON BUILDER
+        string jsonEvent = $@"{{
+            ""Category"":""{category}"",
+            ""Type"":""{eventType}"",
+            ""Process"":""{JsonEscape(process)}"",
+            ""Parent"":""{JsonEscape(parentProcess)}"",
+            ""PID"":{pid},
+            ""ParentPID"":{parentPid},
+            ""TID"":{tid},
+            ""Cmd"":""{JsonEscape(cmdline)}"",
+            ""Details"":""{JsonEscape(details)}""
+        }}".Replace("\r", "").Replace("\n", "");
+
+        if (!_mlWorkQueue.IsAddingCompleted) {
+            _mlWorkQueue.Add(jsonEvent);
+        }
     }
-}
 
     private static void EnqueueRaw(string type, string process, string parent, string path, string cmd, int pid, int tid) {
         Interlocked.Increment(ref TotalEventsParsed);
