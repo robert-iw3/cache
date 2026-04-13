@@ -1,10 +1,7 @@
-# Deep Visibility Sensor v2.1
-
-**Developer Note (@RW):**
-Transitioning the ML and UEBA engine from Python to Rust was the definitive architectural move because it completely eliminated the inter-process communication (IPC) overhead that fundamentally bottlenecked the telemetry pipeline. In the Python implementation, every kernel event had to be serialized into a JSON string and piped across process boundaries, incurring a massive CPU tax and unpredictable garbage collection pauses. By compiling the Isolation Forest and temporal baselining logic into a native Rust DLL, we collapsed the architecture into a single, shared memory space accessed directly via C# FFI. This allowed the sensor to ingest micro-batches of events at wire-speed and leverage Rust's thread-safe concurrency to train the mathematical models asynchronously in the background, achieving a deterministic, zero-latency evaluation loop that Python's interpreted execution and Global Interpreter Lock (GIL) simply could not mathematically match under extreme load.
+# Deep Visibility Sensor
 
 ## Overview
-A **high-performance, real-time** Endpoint Detection and Response (EDR) sensor operating natively in-memory for Windows. This project bridges unmanaged C# Event Tracing for Windows (ETW) telemetry with a **Native Rust Machine Learning Engine (DLL)** to autonomously detect and neutralize evasive OS behaviors, zero-day persistence, and memory manipulation.
+A **high-performance, real-time** Endpoint Detection and Response (EDR) sensor operating natively in-memory for Windows. This project bridges unmanaged C# Event Tracing for Windows (ETW) telemetry with a Python-based Machine Learning daemon to autonomously detect and neutralize evasive OS behaviors, zero-day persistence, and memory manipulation.
 
 Designed to operate entirely without third-party agents or restricted Microsoft ELAM/PPL boundaries, the suite relies on mathematical outlier detection, dynamic Sigma threat intelligence, and surgical thread-level containment.
 
@@ -22,11 +19,11 @@ Standard EDR handles the broad-spectrum behavioral blocking at the surface level
 ## Architectural Highlights
 * **High-Performance ETW Engine:** Natively subscribes to `Kernel-Process`, `Kernel-Registry`, `Kernel-Memory`, and `Kernel-FileIO`. Zero-allocation string parsing and an $O(n)$ Aho-Corasick state machine evaluate 10,000+ Sigma rules in sub-millisecond time.
 * **Context-Aware YARA Engine:** Implements a RAII-based `YaraContext` using **libyara.NET v3.5.2** to manage native handles for ten unique threat matrices. The engine dynamically maps targets to specific vectors (e.g., *BinaryProxy*, *SystemPersistence*, *LotL*) based on process heuristics to maintain zero-latency performance.
-* **Native Rust Behavioral & UEBA Engine:** A deeply integrated math engine (`lib.rs`) operates via a zero-latency Foreign Function Interface (FFI) boundary. Event micro-batching eliminates P/Invoke overhead. It features an **asynchronously trained Isolation Forest** to evaluate execution lineages without blocking the ETW thread, calculates Shannon Entropy (T1027), and tracks high-frequency I/O bursts.
-* **High-Speed Relational Baselines:** Integrates a deterministic User and Entity Behavior Analytics (UEBA) SQLite database utilizing Write-Ahead Logging (WAL) and memory-mapped synchronization. It learns host-specific administrative noise and autonomously suppresses false positives over time.
+* **Two-Tiered Behavioral & UEBA Engine:** A daemonized Python engine operates via lock-free STDIN/STDOUT pipes. It features an Isolation Forest to evaluate execution lineages dynamically, calculates Shannon Entropy (T1027), and tracks high-frequency I/O bursts. It integrates a deterministic User and Entity Behavior Analytics (UEBA) SQLite database that learns host-specific administrative noise and autonomously suppresses false positives over time.
 * **Dynamic Threat Intel & BYOVD Eradication:** The orchestrator compiles local YAML Sigma rules and dynamically fetches live BYOVD (Bring Your Own Vulnerable Driver) hashes from LOLDrivers.io to instantly convict malicious .sys loads.
 * **Surgical Active Defense:** Utilizes native Win32 P/Invoke to execute QuarantineNativeThread (SuspendThread). This freezes malicious threads for forensic analysis without impacting parent process stability.
 * **Automated Forensic Attribution:** Upon interventional detection, the sensor executes `NeuterAndDumpPayload` to extract shellcode, neutralize the thread, and perform a YARA scan. The resulting attribution (e.g., "CobaltStrike_Beacon") is embedded directly into the SIEM audit trail.
+* **Air-Gap & Offline Resilience:** Features a dedicated `Build-AirGapPackage.ps1` staging engine that aggregates all Python dependencies, NuGet libraries, Sigma rules, and YARA intelligence (Elastic & ReversingLabs) into a single, portable deployment unit.
 * **Active Anti-Tamper & Self-Defense:**
   * The C# engine defends its own PID, immediately killing external threads attempting RWX injections into its memory space.
   * Implements `icacls` lockdown sequences and secures the Windows Service DACL via `sc.exe sdset`.
@@ -47,10 +44,10 @@ graph LR
     classDef action fill:#0a0a0a,stroke:#ef4444,stroke-width:2px,color:#ef4444;
     classDef alert fill:#0a0a0a,stroke:#f59e0b,stroke-width:1px,color:#f59e0b;
 
-    TITLE["DEEP VISIBILITY SENSOR v2.1"]:::title
+    TITLE["DEEP VISIBILITY SENSOR"]:::title
 
-    subgraph StagingSpace [COMPILATION & STAGING]
-        RUST_BUILD["Build-RustEngine.ps1<br/>(MSVC/Cargo Compiler)"]:::core
+    subgraph StagingSpace [STAGING // AIR-GAP PIPELINE]
+        AIRGAP["Build-AirGapPackage.ps1<br/>(Dependency Aggregator)"]:::core
         STAGED_YARA[("yara_rules/<br/>10x Vector Matrix")]:::storage
         STAGED_SIGMA[("sigma/<br/>YAML Rules")]:::storage
     end
@@ -66,8 +63,8 @@ graph LR
         VECTORS{"VECTOR MAPPER<br/>DetermineThreatVector"}:::logic
     end
 
-    subgraph AnalysisSpace [ANALYSIS // NATIVE RUST DLL]
-        ML["lib.rs<br/>(Async Isolation Forest)"]:::logic
+    subgraph AnalysisSpace [ANALYSIS // PYTHON DAEMON]
+        ML["OsAnomalyML.py<br/>(Isolation Forest)"]:::logic
         ENTROPY["Shannon Entropy<br/>H(x) Calculus"]:::logic
         UEBA[("DeepSensor_UEBA.db<br/>SQLite WAL")]:::storage
     end
@@ -81,7 +78,8 @@ graph LR
     end
 
     %% Initialization Flow
-    RUST_BUILD ==>|"Compiles"| ML
+    AIRGAP ==>|"Pre-stages"| STAGED_YARA
+    AIRGAP ==>|"Pre-stages"| STAGED_SIGMA
     STAGED_YARA -.->|"Sorted into"| VECTORS
     STAGED_SIGMA -.->|"Compiled into"| TRIE
 
@@ -89,7 +87,7 @@ graph LR
     ETW ==>|"Stream"| CSHARP
     CSHARP <-->|"Targeted Eval"| VECTORS
     CSHARP <-->|"O(n) Search"| TRIE
-    CSHARP ===>|"FFI Micro-Batch"| ML
+    CSHARP ===>|"IPC Batch"| ML
 
     %% ML & UEBA Loop
     ML <--> ENTROPY
@@ -97,7 +95,7 @@ graph LR
 
     %% Bridge to Orchestration
     CSHARP ===>|"Zero-Tolerance Alerts"| ORCH
-    ML ===>|"Anomaly & UEBA Alerts"| ORCH
+    ML ===>|"Anomaly Alerts"| ORCH
     CSHARP -.->|"Shield Self"| SELF_DEF
 
     %% Defense & Forensic Cycle
@@ -119,37 +117,37 @@ graph LR
 ## Prerequisites
 * Windows 10 / Windows 11 / Windows Server 2019+
 * PowerShell 5.1+ (Must be run as Administrator)
-* *Note: The `Build-RustEngine.ps1` script will automatically handle MSVC C++ Build Tools and Rust Toolchain (Cargo) deployment if absent on the host.*
+* *Note: The orchestrator will automatically handle Python 3.11.8 and ML dependency installation if internet-facing.*
 
 ---
 
 ## Quick Start Guide
 
-### 1. Compile the Native Engine
-Compiles the Rust Machine Learning engine into a C-compatible DLL for zero-latency FFI injection.
-```powershell
-.\Build-RustEngine.ps1
-```
-
-### 2. Launch the Orchestrator (Safe Baselining Mode)
+### 1. Launch the Orchestrator (Safe Baselining Mode)
 Bootstraps the environment, fetches YARA/Sigma intelligence, and initializes the HUD in **Dry-Run Mode**.
 ```powershell
 .\DeepSensor_Launcher.ps1
 ```
 
-### 3. Launch the Orchestrator (Armed Mode)
+### 2. Launch the Orchestrator (Armed Mode)
 Enables real-time ETW correlation and autonomous active defense with forensic YARA attribution.
 ```powershell
 .\DeepSensor_Launcher.ps1 -ArmedMode
+```
+
+### 3. Build Air-Gap Package (Offline Deployment)
+Pre-stages all dependencies, libraries, and intelligence for restricted network deployment.
+```powershell
+.\Build-AirGapPackage.ps1
 ```
 
 ---
 
 ## Core File Manifest
 * **`DeepSensor_Launcher.ps1`**: Master orchestrator, HUD renderer, environment bootstrapper, high-performance YARA/Sigma RAII, and Active Defense gateway.
-* **`OsSensor.cs`**: The unmanaged C# ETW listener. Houses the Aho-Corasick string matching algorithms, native Win32 API containment logic, the micro-batching FFI bridge, and the self-defense thread hijacking watchdog.
-* **`lib.rs`**: The native Rust mathematical DLL. Provides asynchronous Isolation Forest execution scoring, Shannon Entropy calculations, stateful Ransomware burst detection, and the autonomous UEBA noise suppression engine.
-* **`Build-RustEngine.ps1`**: Automated compiler pipeline that scaffolds the MSVC/Rust environment and builds the native `DeepSensor_ML_v2.1.dll`.
+* **`OsSensor.cs`**: The unmanaged C# ETW listener. Houses the Aho-Corasick string matching algorithms, native Win32 API containment logic, and the self-defense thread hijacking watchdog.
+* **`OsAnomalyML.py`**: The headless Python mathematical daemon. Provides Isolation Forest execution scoring, Shannon Entropy calculations, stateful Ransomware burst detection, and the autonomous UEBA noise suppression engine.
+* **`Build-AirGapPackage.ps1`**: Pipeline for portable, offline sensor deployment.
 
 ---
 
@@ -164,5 +162,6 @@ The engine operates natively in-memory to prevent disk I/O lag, but preserves cr
 | **`DeepSensor_Events.jsonl`** | Structured JSON alerts with MITRE ATT&CK mappings. | Primary SIEM ingestion file stored in `C:\ProgramData` (Features 50MB Auto-Rotation). |
 | **`DeepSensor_UEBA.db`** | SQLite DB stored in `C:\ProgramData` (WAL mode). | Maintains the learned UEBA baseline for deterministic alert suppression within the secure zone. |
 | **`DeepSensor_UEBA_Diagnostic.log`**| Plaintext audit ledger in `C:\ProgramData`. | Traces the exact lifecycle of alerts transitioning from 'Learning' to 'Suppressed'. |
-| **`DeepSensor_Diagnostic.log`** | Diagnostic log routing FFI engine states. | Troubleshooting environment boots and unmanaged memory mapping (Stored in `C:\ProgramData`). |
+| **`DeepSensor_Diagnostic.log`** | Diagnostic log generated if `-EnableDiagnostics` is passed. | Troubleshooting environment boots and IPC timeouts (Stored in `C:\ProgramData`). |
 | **`deepsensor_canary.tmp`** | Synthetic 60-second file drop. | Evaluates ETW health and detects sensor blinding attempts. |
+| **`C2Hunter_TamperGuard.log`** | `icacls` locked ledger. | Audits DACL lockdowns and sensor security posture. |

@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Deep Visibility Sensor v2.1 - OS Behavioral Orchestrator & Active Defense HUD
+    Deep Sensor - OS Behavioral Orchestrator & Active Defense HUD
 
 .DESCRIPTION
     The central nervous system of the Deep Visibility EDR toolkit. This script is
     responsible for bootstrapping the environment, bridging the unmanaged C# ETW
-    engine natively with the Rust ML DLL, and rendering the mathematically pinned
+    engine with the Python ML daemon, and rendering the mathematically pinned
     diagnostic HUD.
 
     It operates completely independently of network-based C2 tracking, focusing
@@ -14,32 +14,54 @@
     and executing Sigma rules and BYOVD driver lists directly within the kernel event loop.
 
 .ARCHITECTURE_FLOW
-    1. Environment Pre-Flight: Validates the presence of the compiled Rust ML DLL.
+    1. Environment Pre-Flight: Validates the local Python installation and ML dependencies,
+       silently downloading and provisioning the environment if absent on the host.
     2. Threat Intel Compiler: Recursively parses the local 'sigma/' directory, auto-corrects
        YAML syntax, and fetches live BYOVD (LOLDrivers) intelligence to build O(1) arrays.
-    3. Dynamic Compilation: Embeds the OsSensor.cs payload directly
+    3. Dynamic Compilation: Embeds the DeepVisibilitySensor.cs payload directly
        into the PowerShell RAM space, linking the TraceEvent libraries on the fly.
     4. Matrix Initialization: Maps critical PIDs (Sensor) and injects the compiled
        Sigma and Threat Intel arrays directly into the unmanaged C# memory space.
-    5. Native FFI Pipeline: C# natively invokes the Rust ML engine (DeepSensor_ML_v2.1.dll)
-       directly within its own memory space, bypassing all IPC pipe latency.
-    6. Security Lockdown: Utilizes icacls and sdset to restrict file and service access.
+    5. IPC Pipeline: Spawns the OsAnomalyML.py daemon (Behavioral + UEBA engine). The Python
+       daemon maintains a persistent SQLite database (DeepSensor_UEBA.db) in the Temp directory,
+       utilizing WAL mode for lock-free baselining.
+    6. Security Lockdown: Utilizes icacls and sdset to restrict file and service access,
+       locking down the Sigma arrays, script paths, and service configurations from Admin tampering.
     7. Telemetry Triage: Continuously drains the C# ConcurrentQueue. Static, high-
-       fidelity alerts and native ML anomalies are actioned instantly.
+       fidelity alerts (e.g., Sigma matches) are actioned instantly.
+       Raw telemetry is batched and flushed to the Python engine.
     8. Active Defense: If ArmedMode is enabled, native SuspendThread / Quarantine (Surgical) and memory
        neutralization (PAGE_NOACCESS) are issued the millisecond an exploit chain is verified.
+    9. Log Rotation & SIEM API: Routes JSONL telemetry locally or forwards directly
+       to Azure/Splunk HEC endpoints via API.
 
 .PARAMETERS
     ArmedMode           - Enables autonomous surgical thread suspension (Quarantine),
                           memory permission stripping, and forensic payload extraction
                           for critical alerts.
-    PolicyUpdateUrl     - URL to fetch centralized Sigma rules during policy sync.
-    SiemEndpoint        - REST API endpoint for Splunk HEC or Azure Log Analytics.
-    SiemToken           - Authorization token for the SIEM endpoint.
-    MlBinaryName        - The filename of the compiled Rust ML engine.
-    MlRepoUrl           - URL to fetch the compiled Rust binary if missing.
-    LogPath             - Destination for the rolling JSONL SIEM forwarder cache.
-    TraceEventDllPath   - Path to the Microsoft.Diagnostics.Tracing.TraceEvent.dll.
+    PolicyUpdateUrl    - URL to fetch centralized Sigma rules during policy sync.
+    SiemEndpoint       - REST API endpoint for Splunk HEC or Azure Log Analytics.
+    SiemToken          - Authorization token for the SIEM endpoint.
+    PythonPath         - Absolute or relative path to the Python 3.x interpreter.
+    MLScriptPath       - Path to the OsAnomalyML.py behavioral engine.
+    LogPath            - Destination for the rolling JSONL SIEM forwarder cache.
+    TraceEventDllPath  - Path to the Microsoft.Diagnostics.Tracing.TraceEvent.dll.
+
+.NOTES
+    - Requires Administrator privileges to access kernel-level ETW providers.
+    - Designed for maximum stealth and performance; runs entirely in-memory with no
+      on-disk footprint beyond the optional log file and the UEBA SQLite database.
+    - The UEBA database (DeepSensor_UEBA.db) is routed to the host Temp directory to
+      intentionally bypass the strict 'Deny Write' DACLs applied to the sensor's
+      core environment.
+    - The HUD is rendered using ANSI escape codes for cross-platform compatibility
+      and minimal resource usage.
+
+    Author: Robert Weber
+
+    Unlock project directory if cleanup was not initiated:
+
+    icacls "Path:\To\Project\Files" /reset /T /C /Q
 #>
 #Requires -RunAsAdministrator
 
@@ -49,47 +71,59 @@ param (
     [string]$PolicyUpdateUrl = "",
     [string]$SiemEndpoint = "",
     [string]$SiemToken = "",
-    [string]$OfflineRepoPath = "",
-    [string]$MlBinaryName = "DeepSensor_ML_v2.1.dll",
+    [string]$OfflineRepoPath = "", # Example: "\\SERVER\Share\DeepSensor_AirGap_Staging"
+    [string]$PythonPath = "python",
+    [string]$MLScriptPath = "OsAnomalyML.py",
+    [string]$RequirementsPath = "requirements.txt",
     [string]$LogPath = "C:\ProgramData\DeepSensor\Data\DeepSensor_Events.jsonl",
+    # Configurable array of accounts granted Read/Execute access to the data directory
+    #[string[]]$ReadAccessAccounts = @("CORP\svc_splunk_fwd", "BUILTIN\EventLogReaders"),
     [string]$TraceEventDllPath = "C:\Temp\TraceEventPackage\lib\net45\Microsoft.Diagnostics.Tracing.TraceEvent.dll"
 )
 
 # DEVELOPER NOTE: O(1) Exclusions for Alternate Data Streams (ADS)
+# These processes legitimately create hidden streams during normal operation.
 $BenignADSProcs = @(
-    "coreserviceshell.exe",
-    "explorer.exe",
-    "msedge.exe",
-    "chrome.exe",
-    "onedrive.exe"
+    "coreserviceshell.exe", # Trend Micro AMSP Core Service
+    "explorer.exe",         # Windows Explorer (File copies/downloads)
+    "msedge.exe",           # Edge browser SmartScreen data
+    "chrome.exe",           # Chrome browser downloads
+    "onedrive.exe"          # OneDrive cloud sync streams
 )
 
 # DEVELOPER NOTE: O(1) Exclusions for Registry Noise
+# Filters out Microsoft's internal ROT13 telemetry and standard system state checks.
 $BenignExplorerValues = @(
-    "Zvpebfbsg.Jvaqbjf.Rkcybere",
-    "HRZR_PGYFRFFVBA",
-    "IdleInWorkingState",
-    "WritePermissionsCheck",
-    "GlobalUserStartTime"
+    "Zvpebfbsg.Jvaqbjf.Rkcybere", # ROT13 for Microsoft.Windows.Explorer
+    "HRZR_PGYFRFFVBA",            # ROT13 for USER_SESSION
+    "IdleInWorkingState",         # Background system state
+    "WritePermissionsCheck",      # Routine folder access checks
+    "GlobalUserStartTime"         # Standard session initialization
 )
 
 # Environmental Noise Filter
+# Processes in this list will have their ML severity downgraded to prevent accidental isolation.
 $TrustedProcessExclusions = @(
     "svchost.exe", "wmiprvse.exe", "taskhostw.exe", "dllhost.exe",
     "backgroundtaskhost.exe", "coreserviceshell.exe", "asussystemanalysis.exe",
     "samsungmagician.exe", "msedge.exe", "chrome.exe"
 )
 
+# DEVELOPER NOTE: Safeguard to prevent re-compilation errors in the same session.
+if ($null -ne ([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.FullName -match "DeepVisibilitySensor" })) {
+    Write-Host "[!] CRITICAL: DeepVisibilitySensor type is already loaded in this session." -ForegroundColor Red
+    Write-Host "[!] You MUST close and reopen PowerShell to apply code changes." -ForegroundColor Yellow
+    Exit
+}
+
+# DEVELOPER NOTE: Force-clear the standard NT Kernel Logger (silent)
 logman stop "NT Kernel Logger" -ets >$null 2>&1
 
 # ====================== SIEM ENRICHMENT METADATA ======================
-$activeRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
-if ($activeRoute) {
-    $IpAddress = (Get-NetIPAddress -InterfaceIndex $activeRoute.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress
-}
+$IpAddress = (Get-NetIPAddress -AddressFamily IPv4 -Type Unicast -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceAlias -notmatch "Loopback" } | Select-Object -First 1).IPAddress
 if (-not $IpAddress) { $IpAddress = "Unknown" }
 $OsContext = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption -replace 'Microsoft ', ''
-$userStr = "$env:USERDOMAIN\$env:USERNAME".Replace("\", "\\")
+$userStr = "$env:USERDOMAIN\$env:USERNAME".Replace("\", "\\") # Escape backslash for JSON
 
 $global:EnrichmentPrefix = "`"ComputerName`":`"$env:COMPUTERNAME`", `"IP`":`"$IpAddress`", `"OS`":`"$OsContext`", `"SensorUser`":`"$userStr`", "
 # ======================================================================
@@ -101,7 +135,10 @@ if ($ArmedMode) {
     Write-Host "`n[*] SENSOR BOOTING IN AUDIT MODE: OBSERVATION ONLY" -ForegroundColor Yellow
 }
 $ScriptDir = Split-Path $PSCommandPath -Parent
+$FullReqPath = Join-Path $ScriptDir $RequirementsPath
+$FullMLPath = Join-Path $ScriptDir $MLScriptPath
 
+# Declare LogBatch globally so ActiveDefense can append Audit Trails
 $script:logBatch = [System.Collections.Generic.List[string]]::new()
 
 # ====================== CONSOLE UI & BUFFER SETUP ======================
@@ -127,9 +164,13 @@ try {
 [Console]::SetCursorPosition(0, 9)
 
 # ====================== DIAGNOSTICS & TAMPER GUARD ======================
+# DEVELOPER NOTE: All diagnostic/crash logging is now centralized under ProgramData
+# for consistency with UEBA DB, quarantine folder, and security best practices.
+
 $LogDir = Join-Path $env:ProgramData "DeepSensor\Logs"
 $DiagLogPath = Join-Path $LogDir "DeepSensor_Diagnostic.log"
 
+# Ensure the Logs directory exists (created early so Write-Diag works from the very first call)
 if (-not (Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
@@ -141,8 +182,10 @@ if (Test-Path $DiagLogPath) {
 $global:StartupLogs = [System.Collections.Generic.List[string]]::new()
 
 function Write-Diag([string]$Message, [string]$Level = "INFO") {
+    # DEVELOPER NOTE: Always log to file during startup phase to ensure troubleshooting is possible.
     $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
     try {
+        # Defensive directory check (in case something deleted it mid-run)
         if (-not (Test-Path $LogDir)) {
             New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
         }
@@ -155,20 +198,25 @@ function Write-Diag([string]$Message, [string]$Level = "INFO") {
     }
 }
 
+# Posture & WMI Hijacking
 function Invoke-EnvironmentalAudit {
     Write-Diag "    [*] Initializing Environmental Audit..." "STARTUP"
     Write-Diag "        [*] Executing Proactive Posture & WMI Sweep..." "STARTUP"
 
+    # 1. LSASS PPL Protection Check
     $lsa = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -ErrorAction SilentlyContinue
     if (-not $lsa -or $lsa.RunAsPPL -ne 1) {
         Write-Diag "[POSTURE] Vulnerability: LSASS is not running as a Protected Process Light (PPL)." "AUDIT"
     }
 
+    # 2. Exposed RDP Check
     $rdp = Get-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -ErrorAction SilentlyContinue
     if ($rdp -and $rdp.fDenyTSConnections -eq 0) {
         Write-Diag "[POSTURE] Vulnerability: RDP is currently enabled and exposed." "AUDIT"
     }
 
+    # 3. WMI Repository Auditing (Epic 9)
+    # Attackers drop fileless payloads into CommandLineEventConsumers
     try {
         $consumers = Get-WmiObject -Namespace "root\subscription" -Class CommandLineEventConsumer -ErrorAction Stop
         foreach ($c in $consumers) {
@@ -176,9 +224,12 @@ function Invoke-EnvironmentalAudit {
                 Write-Diag "[THREAT HUNT] Suspicious WMI Event Consumer Found: $($c.Name) -> $($c.CommandLineTemplate)" "CRITICAL"
             }
         }
-    } catch { }
+    } catch {
+        # WMI namespace might be corrupted or inaccessible
+    }
 }
 
+# Sever the host from the network when the ML daemon reports a critical threat
 function Invoke-HostIsolation {
     param([string]$Reason, [string]$TriggeringProcess)
 
@@ -191,8 +242,12 @@ function Invoke-HostIsolation {
     Write-Host "    Reason: $Reason ($TriggeringProcess)" -ForegroundColor Yellow
 
     try {
+        # Drop all inbound/outbound traffic across all profiles
         Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction Block -DefaultOutboundAction Block -ErrorAction Stop
+
+        # Poke a single hole for your SIEM / Orchestrator API (Change IP as needed)
         New-NetFirewallRule -DisplayName "DeepSensor_Safe_Uplink" -Direction Outbound -Action Allow -RemoteAddress "10.0.0.50" -ErrorAction SilentlyContinue | Out-Null
+
         Write-Diag "[ACTIVE DEFENSE] Host isolated from network via Firewall. Safe Uplink preserved." "CRITICAL"
     } catch {
         Write-Diag "[ACTIVE DEFENSE ERROR] Failed to enforce firewall quarantine: $($_.Exception.Message)" "CRITICAL"
@@ -205,7 +260,7 @@ function Protect-SensorEnvironment {
     $DataDir = "C:\ProgramData\DeepSensor\Data"
     if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
-    $PathsToLock = @($ScriptDir, (Join-Path $ScriptDir $MlBinaryName), (Join-Path $ScriptDir "sigma"))
+    $PathsToLock = @($ScriptDir, $FullMLPath, (Join-Path $ScriptDir "sigma"))
     foreach ($p in $PathsToLock) {
         if (Test-Path $p) {
             icacls $p /inheritance:d /q | Out-Null
@@ -215,27 +270,30 @@ function Protect-SensorEnvironment {
         }
     }
 
+    # SECURE DATA DIRECTORY (Grant Admin Full Control, Remove Standard Users)
     if (Test-Path $DataDir) {
         $currentUser = "$env:USERDOMAIN\$env:USERNAME"
 
         icacls $DataDir /inheritance:d /q | Out-Null
         icacls $DataDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q | Out-Null
         icacls $DataDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q | Out-Null
+
+        # Grant the launching user Read & Execute access
         icacls $DataDir /grant "${currentUser}:(OI)(CI)M" /q
 
-        if ($null -ne $ReadAccessAccounts) {
-            foreach ($account in $ReadAccessAccounts) {
-                if (-not [string]::IsNullOrWhiteSpace($account)) {
-                    icacls $DataDir /grant "${account}:(OI)(CI)RX" /q | Out-Null
-                }
+        # Apply Read & Execute access to the configured array of accounts
+        foreach ($account in $ReadAccessAccounts) {
+            if (-not [string]::IsNullOrWhiteSpace($account)) {
+                icacls $DataDir /grant "${account}:(OI)(CI)RX" /q | Out-Null
             }
         }
+
         icacls $DataDir /remove "BUILTIN\Users" /q 2>$null
     }
 
     Write-Diag "    [+] Discretionary Access Control Lists (DACLs) locked down." "STARTUP"
 
-    $ServiceName = "DeepSensorService"
+    $ServiceName = "DeepSensor"
     $serviceExists = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($serviceExists) {
         $secureSddl = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWLOCRRC;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
@@ -244,31 +302,65 @@ function Protect-SensorEnvironment {
     }
 }
 
-# ====================== ENVIRONMENT BOOTSTRAP (RUST NATIVE DLL) ======================
+# ====================== ENVIRONMENT BOOTSTRAP ======================
 function Initialize-Environment {
-    Write-Diag "[*] Executing Environment Pre-Flight Checks..." "STARTUP"
-    $MlBinaryPath = Join-Path $ScriptDir $MlBinaryName
-    $binaryReady = $false
+    Write-Diag "[*]Executing Environment Pre-Flight Checks..." "STARTUP"
+    $pythonCmd = $PythonPath
+    $pythonInstalled = $false
 
-    if (Test-Path $MlBinaryPath) {
-        $binaryReady = $true
-        Write-Diag "    [+] Deep Visibility Native Rust DLL validated." "STARTUP"
-    } else {
-        Write-Diag "    [-] ML DLL absent. Initiating offline deployment..." "STARTUP"
-        try {
-            if ($OfflineRepoPath) {
-                Write-Diag "    [*] Fetching ML DLL from offline repository..." "STARTUP"
-                Copy-Item (Join-Path $OfflineRepoPath $MlBinaryName) -Destination $MlBinaryPath -Force
+    try {
+        $null = & $pythonCmd --version 2>&1
+        $pythonInstalled = $true
+        Write-Diag "    [+] Python interpreter validated." "STARTUP"
+    } catch {
+        Write-Diag "    [-] Python absent. Initiating silent deployment..." "STARTUP"
+        $InstallerPath = "$env:TEMP\python-installer.exe"
+
+        if ($OfflineRepoPath) {
+            Write-Diag "    [*] Fetching Python installer from offline repository..." "STARTUP"
+            Copy-Item (Join-Path $OfflineRepoPath "python-3.11.8-amd64.exe") -Destination $InstallerPath -Force
+        } else {
+            $InstallerUrl = "https://www.python.org/ftp/python/3.11.8/python-3.11.8-amd64.exe"
+            Invoke-WebRequest -Uri $InstallerUrl -OutFile $InstallerPath
+        }
+
+        $InstallProcess = Start-Process -FilePath $InstallerPath -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait -PassThru
+
+        if ($InstallProcess.ExitCode -eq 0) {
+            Write-Diag "    [+] Python deployed successfully." "STARTUP"
+            $pythonInstalled = $true
+            $pythonCmd = "$env:ProgramFiles\Python311\python.exe"
+
+            foreach ($level in "Machine", "User") {
+                [Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
+                    Set-Item -Path "Env:\$($_.Name)" -Value $_.Value -ErrorAction SilentlyContinue
+                }
             }
-            if (Test-Path $MlBinaryPath) {
-                Write-Diag "    [+] ML DLL deployed successfully." "STARTUP"
-                $binaryReady = $true
-            } else { Write-Diag "    [!] ML DLL deployment failed." "STARTUP" }
-        } catch { Write-Diag "    [!] ML DLL acquisition failed: $($_.Exception.Message)" "STARTUP" }
+        } else {
+            Write-Diag "    [!] Python deployment failed (Exit Code: $($InstallProcess.ExitCode))." "STARTUP"
+        }
+        if (Test-Path $InstallerPath) { Remove-Item $InstallerPath -Force }
     }
 
-    if (-not $binaryReady) { throw "CRITICAL: Unable to provision the ML engine DLL." }
-    return $MlBinaryPath
+    if ($pythonInstalled) {
+        Write-Diag "    [*] Validating ML dependencies..." "STARTUP"
+
+        if ($OfflineRepoPath) {
+            Write-Diag "    [*] Installing ML dependencies from offline wheels..." "STARTUP"
+            $WheelDir = Join-Path $OfflineRepoPath "wheels"
+            & $pythonCmd -m pip install --no-index --find-links="$WheelDir" scikit-learn numpy joblib scipy --quiet
+        } else {
+            & $pythonCmd -m pip install --upgrade pip --quiet
+            if (Test-Path $FullReqPath) {
+                & $pythonCmd -m pip install -r $FullReqPath --quiet
+            } else {
+                & $pythonCmd -m pip install scikit-learn numpy joblib scipy --quiet
+            }
+        }
+        Write-Diag "    [+] ML dependencies verified." "STARTUP"
+    }
+
+    return $pythonCmd
 }
 
 function Initialize-TraceEventDependency {
@@ -280,6 +372,7 @@ function Initialize-TraceEventDependency {
     $ExistingDll = Get-ChildItem -Path $ExtractBase -Filter $ExpectedDllName -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if ($ExistingDll) {
+        # DEVELOPER NOTE: Ensure all helper dependencies (including YARA) exist alongside TraceEvent
         $DllDir = Split-Path $ExistingDll.FullName -Parent
         $FastSerPath = Join-Path $DllDir "Microsoft.Diagnostics.FastSerialization.dll"
         $YaraPath = Join-Path $DllDir "libyara.NET.dll"
@@ -295,9 +388,12 @@ function Initialize-TraceEventDependency {
         if (Test-Path $ExtractBase) { Remove-Item $ExtractBase -Recurse -Force -ErrorAction SilentlyContinue }
         New-Item -ItemType Directory -Path $ExtractBase -Force | Out-Null
 
+        # DEVELOPER NOTE: FastSerialization is actually bundled INSIDE the TraceEvent
+        # package. We only need to independently download the Unsafe dependency.
         $TE_Zip = "$env:TEMP\TE.zip"; $UN_Zip = "$env:TEMP\UN.zip"
 
         if ($OfflineRepoPath) {
+            Write-Diag "    [*] Fetching TraceEvent libraries from offline repository..." "STARTUP"
             Copy-Item (Join-Path $OfflineRepoPath "traceevent.nupkg") -Destination $TE_Zip -Force
             Copy-Item (Join-Path $OfflineRepoPath "unsafe.nupkg") -Destination $UN_Zip -Force
         } else {
@@ -309,8 +405,10 @@ function Initialize-TraceEventDependency {
 
         Expand-Archive -Path $TE_Zip -DestinationPath "$ExtractBase\TE" -Force
         Expand-Archive -Path $UN_Zip -DestinationPath "$ExtractBase\UN" -Force
+
         Remove-Item $TE_Zip, $UN_Zip -Force -ErrorAction SilentlyContinue
 
+        # DEVELOPER NOTE: Extract libyara.NET into the temp folder
         $YARA_Zip = "$env:TEMP\YARA.zip"
         if ($OfflineRepoPath) {
             Copy-Item (Join-Path $OfflineRepoPath "libyaranet.nupkg") -Destination $YARA_Zip -Force
@@ -324,9 +422,14 @@ function Initialize-TraceEventDependency {
 
         if ($FoundDll) {
             $DllDir = Split-Path $FoundDll.FullName -Parent
+
+            # 1. Move the managed .NET helper (Unsafe) directly next to TraceEvent
             $UnsafeDll = Get-ChildItem -Path "$ExtractBase\UN" -Filter "System.Runtime.CompilerServices.Unsafe.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "net45|netstandard|net46" } | Select-Object -First 1
             if ($UnsafeDll) { Copy-Item -Path $UnsafeDll.FullName -Destination $DllDir -Force }
 
+            # 2. DEVELOPER NOTE: TraceEvent explicitly expects its native C++ dependencies
+            # to be inside an architecture-specific subfolder ('amd64'). We must create
+            # this folder and place the unmanaged binaries inside it.
             $Amd64Dir = Join-Path $DllDir "amd64"
             if (-not (Test-Path $Amd64Dir)) { New-Item -ItemType Directory -Path $Amd64Dir -Force | Out-Null }
 
@@ -339,6 +442,7 @@ function Initialize-TraceEventDependency {
                 if ($h) { Copy-Item -Path $h.FullName -Destination $Amd64Dir -Force }
             }
 
+            # 3. YARA Dependencies (MOVED HERE AFTER $DllDir AND $Amd64Dir ARE DEFINED)
             $ManagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "libyara.NET.dll" -Recurse | Select-Object -First 1
             $UnmanagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "yara.dll" -Recurse | Where-Object { $_.FullName -match "win-x64" } | Select-Object -First 1
 
@@ -362,14 +466,20 @@ $global:TotalMitigations = 0
 function Invoke-ActiveDefense([string]$ProcName, [int]$PID_Id, [int]$TID_Id, [string]$TargetType, [string]$Reason) {
     if (-not $global:IsArmed -or $ProcName -match "Unknown|System|Idle") { return }
 
+    # Capture YARA attribution directly for the audit trail.
+    # Note: Address 0 is used for behavioral hits where specific allocation data is missing.
     $yaraMatch = [DeepVisibilitySensor]::NeuterAndDumpPayload($PID_Id, 0, 4096)
-    $containmentStatus = "Failed"
+
+    $killStatus = "Failed"
 
     if ($TargetType -eq "Thread" -and $TID_Id -gt 0) {
+        # DEVELOPER NOTE: Swapped Terminate for Quarantine. Passed both TID and PID.
         $res = [DeepVisibilitySensor]::QuarantineNativeThread($TID_Id, $PID_Id)
         if ($res) {
-            $containmentStatus = "Thread ($TID_Id) Quarantined"
+            $killStatus = "Thread ($TID_Id) Quarantined"
             $global:TotalMitigations++
+
+            # Surgical Containment Audit Trail
             $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"QuarantineNativeThread`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"YaraAttribution`":`"$yaraMatch`"}"
             $script:logBatch.Add($audit)
         }
@@ -377,13 +487,15 @@ function Invoke-ActiveDefense([string]$ProcName, [int]$PID_Id, [int]$TID_Id, [st
     else {
         Stop-Process -Id $PID_Id -Force -ErrorAction SilentlyContinue
         if (-not (Get-Process -Id $PID_Id -ErrorAction SilentlyContinue)) {
-            $containmentStatus = "Process ($PID_Id) Terminated"
+            $killStatus = "Process ($PID_Id) Terminated"
             $global:TotalMitigations++
+
+            # Process Containment Audit Trail
             $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"Stop-Process`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"YaraAttribution`":`"$yaraMatch`"}"
             $script:logBatch.Add($audit)
         }
     }
-    Add-AlertMessage "DEFENSE: $containmentStatus ($ProcName -> $Reason | YARA: $yaraMatch)" "$([char]27)[93;40m"
+    Add-AlertMessage "DEFENSE: $killStatus ($ProcName -> $Reason | YARA: $yaraMatch)" "$([char]27)[93;40m"
 }
 
 # ====================== HUD DASHBOARD RENDERING ======================
@@ -400,8 +512,8 @@ function Add-AlertMessage([string]$Message, [string]$ColorCode) {
 
 function Draw-AlertWindow {
     $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
-    $UIWidth = 100
-    [Console]::SetCursorPosition(0, 24)
+    $UIWidth = 100 # Match Dashboard logic
+    [Console]::SetCursorPosition(0, 24) # Shifted down to line 24
 
     $logTrunc = if ($LogPath.Length -gt 60) { "..." + $LogPath.Substring($LogPath.Length - 57) } else { $LogPath }
     $headerPlain = "  [ RECENT DETECTIONS ] | Log: $logTrunc"
@@ -422,7 +534,7 @@ function Draw-AlertWindow {
     }
     Write-Host "$cCyan╚════════════════════════════════════════════════════════════════════════════════════════════════════╝$cReset"
 
-    [Console]::SetCursorPosition(0, 32)
+[Console]::SetCursorPosition(0, 32)
     [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
@@ -443,6 +555,7 @@ function Draw-StartupWindow {
     for ($i = 0; $i -lt 10; $i++) {
         if ($i -lt $recent.Count) {
             $logLine = "    $($recent[$i])"
+            # Truncate long lines to prevent wrapping
             if ($logLine.Length -gt ($UIWidth - 1)) { $logLine = $logLine.Substring(0, $UIWidth - 4) + "..." }
             $pad = " " * [math]::Max(0, ($UIWidth - $logLine.Length))
             Write-Host "$cCyan║$cReset$logLine$pad$cCyan║$cReset"
@@ -456,18 +569,18 @@ function Draw-StartupWindow {
     [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
-function Draw-Dashboard([long]$Events, [long]$MlEvals, [int]$Alerts, [string]$EtwHealth, [string]$MlHealth) {
+function Draw-Dashboard([int]$Events, [int]$MlSent, [int]$Alerts, [string]$EtwHealth, [string]$MlHealth) {
     $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
     [Console]::SetCursorPosition(0, 0)
 
     $evPad       = $Events.ToString().PadRight(9)
-    $mlPad       = $MlEvals.ToString().PadRight(9)
+    $mlPad       = $MlSent.ToString().PadRight(9)
     $alertPad    = $Alerts.ToString().PadRight(9)
     $defFiredPad = $global:TotalMitigations.ToString().PadRight(9)
     $tamperPad   = $EtwHealth.PadRight(9)
     $mlHealthPad = $MlHealth.PadRight(9)
 
-    $TitlePlain = "  ⚡ Deep Sensor v2.1 | OS BEHAVIORAL DASHBOARD"
+    $TitlePlain = "  ⚡ DEEP SENSOR V2 | OS BEHAVIORAL DASHBOARD"
     $StatusStr  = "  [ LIVE TELEMETRY ]"
     $Stats1Str  = "  OS Events Parsed : $evPad | Active Alerts    : $alertPad"
     $Stats2Str  = "  ML Batches Sent  : $mlPad | Defenses Fired   : $defFiredPad"
@@ -481,14 +594,14 @@ function Draw-Dashboard([long]$Events, [long]$MlEvals, [int]$Alerts, [string]$Et
     $PadTamper = " " * [math]::Max(0, ($UIWidth - $TamperStr.Length))
 
     $EColor = if ($EtwHealth -eq "Good") { $cGreen } else { $cRed }
-    $MColor = if ($MlHealth -match "Native DLL|Good") { $cGreen } else { $cRed }
+    $MColor = if ($MlHealth -eq "Good") { $cGreen } else { $cRed }
 
     Write-Host "$cCyan╔════════════════════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-    Write-Host "$cCyan║$cReset  $cRed⚡ Deep Sensor v2.1$cReset | OS BEHAVIORAL DASHBOARD$PadTitle$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  $cRed⚡ DEEP SENSOR V2$cReset | OS BEHAVIORAL DASHBOARD$PadTitle$cCyan║$cReset"
     Write-Host "$cCyan╠════════════════════════════════════════════════════════════════════════════════════════════════════╣$cReset"
     Write-Host "$cCyan║$cReset  $cDark[ LIVE TELEMETRY ]$cReset$PadStatus$cCyan║$cReset"
     Write-Host "$cCyan║$cReset  OS Events Parsed : $cCyan$evPad$cReset | Active Alerts    : $cRed$alertPad$cReset$PadStats1$cCyan║$cReset"
-    Write-Host "$cCyan║$cReset  Native ML Evals  : $cYellow$mlPad$cReset | Defenses Fired   : $cYellow$defFiredPad$cReset$PadStats2$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  ML Batches Sent  : $cYellow$mlPad$cReset | Defenses Fired   : $cYellow$defFiredPad$cReset$PadStats2$cCyan║$cReset"
     Write-Host "$cCyan║$cReset  ETW Sensor State : $EColor$tamperPad$cReset | ML Math Engine   : $MColor$mlHealthPad$cReset$PadTamper$cCyan║$cReset"
     $ExitPlain = "  [ CTRL+C ] TO EXIT AND INITIATE TEARDOWN SEQUENCE"
     $PadExit   = " " * [math]::Max(0, ($UIWidth - $ExitPlain.Length))
@@ -518,6 +631,7 @@ function Sync-YaraIntelligence {
 
         try {
             if ($OfflineRepoPath) {
+                # Attempt to pull from offline staging if available
                 $OfflineZip = Join-Path $OfflineRepoPath "$($src.Name).zip"
                 if (Test-Path $OfflineZip) { Copy-Item $OfflineZip -Destination $TempZip -Force }
             } else {
@@ -528,6 +642,8 @@ function Sync-YaraIntelligence {
             if (Test-Path $TempZip) {
                 Expand-Archive -Path $TempZip -DestinationPath $TempExt -Force
                 $SourceRules = Join-Path $TempExt $src.SubPath
+
+                # Mirror the rules into the local 'yara/' landing zone
                 Copy-Item -Path "$SourceRules\*" -Destination $YaraBaseDir -Recurse -Force
                 Write-Diag "    [+] $($src.Name) staged to local yara/ directory." "STARTUP"
             }
@@ -539,15 +655,20 @@ function Sync-YaraIntelligence {
         }
     }
 
+    # CONTEXT-AWARE SORTING: Move rules from yara/ into the vector subfolders
+    # DEVELOPER NOTE: Using [System.IO.File] instead of Get-Content for 10x speed
+    # increase when processing thousands of rules.
     $LocalRules = Get-ChildItem -Path $YaraBaseDir -Filter "*.yar" -Recurse
     Write-Diag "    [*] Sorting $($LocalRules.Count) rules into context-aware vectors..." "STARTUP"
 
+    # Pre-create all vector directories to avoid repeated I/O checks in the loop
     $Vectors = @("WebInfrastructure", "SystemExploits", "LotL", "MacroPayloads", "BinaryProxy", "SystemPersistence", "InfostealerTargets", "RemoteAdmin", "DevOpsSupplyChain", "Core_C2")
     foreach ($v in $Vectors) {
         $vPath = Join-Path $VectorDir $v
         if (-not (Test-Path $vPath)) { New-Item -ItemType Directory -Path $vPath -Force | Out-Null }
     }
 
+    # Sorting Logic inside Sync-YaraIntelligence for Windows Artifacts
     foreach ($rule in $LocalRules) {
         try {
             $content = [System.IO.File]::ReadAllText($rule.FullName)
@@ -565,7 +686,10 @@ function Sync-YaraIntelligence {
 
             [System.IO.File]::Copy($rule.FullName, (Join-Path $VectorDir "$target\$($rule.Name)"), $true)
         }
-        catch { continue }
+        catch {
+            # Skip corrupted or locked files rather than halting the orchestrator
+            continue
+        }
     }
     Write-Diag "    [+] YARA Intelligence sorted and ready for compilation." "STARTUP"
 }
@@ -577,6 +701,7 @@ function Initialize-SigmaEngine {
     $LocalSigmaDir = Join-Path $ScriptDir "sigma"
     if (-not (Test-Path $LocalSigmaDir)) { New-Item -ItemType Directory -Path $LocalSigmaDir -Force | Out-Null }
 
+    # --- NEW: LIVE SIGMAHQ REPOSITORY PULL ---
     $TempZipPath = "$env:TEMP\sigma_master.zip"
     $ExtractPath = "$env:TEMP\sigma_extract"
 
@@ -612,6 +737,7 @@ function Initialize-SigmaEngine {
         if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    # --- THE GATEKEEPER PARSER ---
     $SigmaFiles = Get-ChildItem -Path $LocalSigmaDir -Include "*.yml", "*.yaml" -Recurse
 
     $SigmaCmdKeys = [System.Collections.Generic.List[string]]::new()
@@ -628,13 +754,17 @@ function Initialize-SigmaEngine {
         $lines = Get-Content $file.FullName
         $content = $lines -join "`n"
 
+        # GATEKEEPER 1: Platform Validation
         if ($content -notmatch "product:\s*windows") { $SkippedCount++; continue }
+
+        # NOISE FILTER: Skip the two extremely noisy Sigma rules
         if ($content -match "XBAP Execution From Uncommon Locations" -or
             $content -match "Suspicious Double Extension File Execution" -or
             $content -match "PresentationHost\.EXE") {
             $SkippedCount++; continue
         }
 
+        # GATEKEEPER 2: Modifier Sanitization (Allow |all modifiers, drop hashes)
         if ($content -match "sha256:" -or $content -match "md5:") { $SkippedCount++; continue }
 
         $title = "Unknown Sigma Rule"
@@ -643,9 +773,15 @@ function Initialize-SigmaEngine {
         $inImgBlock = $false
         $inTagsBlock = $false
 
+        # Fast Line-by-Line State Machine Parser
         foreach ($line in $lines) {
+            # Extract Rule Title
             if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
+
+            # Detect Array Starts
             if ($line -match "(?i)^tags:") { $inTagsBlock = $true; $inCmdBlock = $false; $inImgBlock = $false; continue }
+
+            # Capture chained modifiers (like |contains|all:) and new telemetry fields
             if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|Details|ScriptBlockText|ImageLoaded|Signature)\|.*?contains.*?:") {
                 $inCmdBlock = $true; $inImgBlock = $false; $inTagsBlock = $false; continue
             }
@@ -653,6 +789,7 @@ function Initialize-SigmaEngine {
                 $inImgBlock = $true; $inCmdBlock = $false; $inTagsBlock = $false; continue
             }
 
+            # Extract Tags
             if ($inTagsBlock) {
                 if ($line -match "^\s*-\s*(.+)") {
                     $val = $matches[1].Trim(" '`"")
@@ -662,11 +799,18 @@ function Initialize-SigmaEngine {
                 }
             }
 
+            # Reset state for Cmd/Img if a new root key begins
             if (-not $inTagsBlock -and $line -match "^[a-zA-Z]") { $inCmdBlock = $false; $inImgBlock = $false }
 
+            # Extract Array Values & Append Tags to Title
             if ($inCmdBlock -and $line -match "^\s*-\s*(.+)") {
                 $val = $matches[1].Trim(" '`"")
-                if (-not [string]::IsNullOrWhiteSpace($val) -and $val.Length -gt 3 -and $val -notmatch "(?i)^\.exe$" -and $val -notmatch "(?i)^[a-z]:\\\\?$") {
+
+                if (-not [string]::IsNullOrWhiteSpace($val) -and
+                    $val.Length -gt 3 -and
+                    $val -notmatch "(?i)^\.exe$" -and
+                    $val -notmatch "(?i)^[a-z]:\\\\?$") {
+
                     $SigmaCmdKeys.Add($val)
                     $formattedTitle = if ($ruleTags.Count -gt 0) { "$title [$($ruleTags -join ', ')]" } else { $title }
                     $SigmaCmdTitles.Add($formattedTitle)
@@ -682,9 +826,11 @@ function Initialize-SigmaEngine {
                 }
             }
         }
+
         $ParsedCount++
     }
 
+    # Inject Built-in core signatures
     $BuiltInCmds = @("sekurlsa::logonpasswords", "lsadump::", "privilege::debug", "Invoke-BloodHound", "procdump -ma lsass", "vssadmin delete shadows")
     foreach ($c in $BuiltInCmds) {
         $SigmaCmdKeys.Add($c); $SigmaCmdTitles.Add("Built-in Core TI Signature")
@@ -692,6 +838,13 @@ function Initialize-SigmaEngine {
 
     Write-Diag "    [+] Gatekeeper Compilation Complete: $ParsedCount rules armed ($SkippedCount incompatible rules safely bypassed)." "STARTUP"
 
+    # Inject Built-in core signatures
+    $BuiltInCmds = @("sekurlsa::logonpasswords", "lsadump::", "privilege::debug", "Invoke-BloodHound", "procdump -ma lsass", "vssadmin delete shadows")
+    foreach ($c in $BuiltInCmds) {
+        $SigmaCmdKeys.Add($c); $SigmaCmdTitles.Add("Built-in Core TI Signature")
+    }
+
+    # --- LOLDRIVERS THREAT INTEL ---
     $TiDriverSignatures = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $OfflineDrivers = @("capcom.sys", "iqvw64.sys", "RTCore64.sys", "gdrv.sys", "AsrDrv.sys", "procexp.sys")
     foreach ($d in $OfflineDrivers) { [void]$TiDriverSignatures.Add($d) }
@@ -734,14 +887,15 @@ function Initialize-SigmaEngine {
 }
 
 # ====================== SENSOR INITIALIZATION ======================
-$ValidMlBinaryPath = Initialize-Environment
+$ValidPythonPath = Initialize-Environment
 
+# Dynamically fetch and locate the DLL, updating the path for Add-Type
 $ActualDllPath = Initialize-TraceEventDependency -ExtractBase "C:\Temp\TraceEventPackage"
 if (-not $ActualDllPath) {
     Write-Host "`n[!] CRITICAL: TraceEvent dependency missing. Cannot start ETW sensor. Exiting." -ForegroundColor Red
     Exit
 }
-$TraceEventDllPath = $ActualDllPath
+$TraceEventDllPath = $ActualDllPath # Overwrite the hardcoded parameter with the actual dynamic path
 Write-Diag "    [+] Environment Bootstrap Complete." "STARTUP"
 
 Invoke-EnvironmentalAudit
@@ -750,9 +904,61 @@ $CompiledTI = Initialize-SigmaEngine
 
 Write-Diag "Initializing Core Engine..." "STARTUP"
 
-# 1. Compile C# Sensor into RAM
+
+# 1. Instantiate Python ML Daemon via IPC Pipes
+$pyInfo = New-Object System.Diagnostics.ProcessStartInfo
+$pyInfo.FileName = $ValidPythonPath
+$pyInfo.Arguments = "-u `"$FullMLPath`""
+$pyInfo.RedirectStandardInput = $true
+$pyInfo.RedirectStandardOutput = $true
+$pyInfo.RedirectStandardError = $true
+$pyInfo.UseShellExecute = $false
+$pyInfo.CreateNoWindow = $true
+
+$pyProcess = [System.Diagnostics.Process]::Start($pyInfo)
+$pyIn = $pyProcess.StandardInput
+$pyOut = $pyProcess.StandardOutput
+$pyErr = $pyProcess.StandardError
+
+# === IPC AUTHENTICATION BEACON ===
+$pyIn.WriteLine("AUTH:" + $pyProcess.Id)
+Write-Diag "    [+] Sent IPC authentication beacon to Python" "STARTUP"
+
+# === IPC CONFIGURATION BEACON ===
+$configPayload = @{ trusted_binaries = $TrustedProcessExclusions } | ConvertTo-Json -Compress
+$pyIn.WriteLine("CONFIG:$configPayload")
+Write-Diag "    [+] Sent dynamic noise filter configuration to Python" "STARTUP"
+
+$pyIn.Flush()
+
+# 2. Wait for the Python PID with a strict 5-second timeout (Prevents infinite lockup)
+$pyPid = $null
+$handshakeTimeout = 50
+while ($null -eq $pyPid -and $handshakeTimeout-- -gt 0) {
+    if (-not $pyErr.EndOfStream) {
+        $errLine = $pyErr.ReadLine()
+        if ($errLine -match "\[PYTHON_PID\] (\d+)") {
+            $pyPid = $matches[1]
+            Write-Diag "    [+] ML Daemon active on PID: $pyPid" "STARTUP"
+        }
+    }
+    Start-Sleep -Milliseconds 100
+}
+
+if ($null -eq $pyPid) {
+    throw "CRITICAL: ML Daemon Handshake Timeout. Python did not return a PID."
+}
+
+# 2. Compile C# Sensor into RAM
 try {
+    # DEVELOPER NOTE: The CLR Fusion Loader aggressively JITs background threads.
+    # We must preemptively load the main TraceEvent DLL AND all of its sibling
+    # helper DLLs (like FastSerialization) into the Global AppDomain so the compiler
+    # never has to guess where they are.
     $DllDir = Split-Path $ActualDllPath -Parent
+
+    # DEVELOPER NOTE: We must explicitly exclude the unmanaged C++ native binaries
+    # (including native YARA) from the references to prevent the CS0009 crash.
     $SiblingDlls = Get-ChildItem -Path $DllDir -Filter "*.dll" | Where-Object { $_.Name -notmatch "KernelTraceControl|msdia140|yara(?!\.NET)" }
 
     foreach ($dll in $SiblingDlls) {
@@ -767,18 +973,13 @@ try {
         "System.Threading", "System.Threading.Thread"
     )
 
+    # Append all discovered helper DLLs directly to the compiler references
     $RefAssemblies += $SiblingDlls.FullName
 
-    # Only compile if the class isn't already resident in the active memory session
-    if (-not ("DeepVisibilitySensor" -as [type])) {
-        Add-Type -TypeDefinition (Get-Content (Join-Path $ScriptDir "OsSensor.cs") -Raw) -ReferencedAssemblies $RefAssemblies -ErrorAction Stop
-    }
+    Add-Type -TypeDefinition (Get-Content (Join-Path $ScriptDir "OsSensor.cs") -Raw) -ReferencedAssemblies $RefAssemblies -ErrorAction Stop
 
+    # Inject PIDs, Drivers, and the full Sigma Compiled Arrays into unmanaged memory
     Write-Diag "    [*] Bootstrapping unmanaged memory structures..." "STARTUP"
-
-    # Map the DLL path for the C# DllImport dynamically
-    [DeepVisibilitySensor]::SetLibraryPath($ScriptDir)
-
     [DeepVisibilitySensor]::Initialize(
         $ActualDllPath,
         $PID, $CompiledTI.Drivers,
@@ -787,11 +988,16 @@ try {
         $BenignExplorerValues, $BenignADSProcs
     )
 
+    # 1. Sync and Compile YARA
     Sync-YaraIntelligence
+    # Initialize the Context-Aware YARA matrices
     $YaraRulesPath = if ($OfflineRepoPath) { Join-Path $OfflineRepoPath "yara_rules" } else { Join-Path $ScriptDir "yara_rules" }
     [DeepVisibilitySensor]::InitializeYaraMatrices($YaraRulesPath)
 
+    # Arm the C# Engine if the user passed the flag
     [DeepVisibilitySensor]::IsArmed = $ArmedMode.IsPresent
+
+    # 2. Start the ETW Session
     [DeepVisibilitySensor]::StartSession()
 
 } catch {
@@ -800,159 +1006,249 @@ try {
     throw $_
 }
 
+# DACL Hardening LAST so it doesn't block the compilation phase above
 Protect-SensorEnvironment
 
 # ====================================================================
-$totalEvents = 0; $totalAlerts = 0
+$totalEvents = 0; $mlSent = 0; $totalAlerts = 0
+$dataBatch = [System.Collections.Generic.List[PSObject]]::new()
 
 $LastHeartbeat = Get-Date; $SensorBlinded = $false
+$LastMlHealthPing = (Get-Date).AddSeconds(-115); $LastMlHeartbeat = Get-Date; $MlBlinded = $false
 $LastPolicySync = Get-Date
-$LastHeartbeatWrite = Get-Date
 
 [Console]::SetCursorPosition(0, 9)
 
 # ====================== MAIN ORCHESTRATOR LOOP ======================
 try {
+    # Prevent OS from broadcasting the kill signal to Python
     try { [console]::TreatControlCAsInput = $true } catch {}
     Write-Diag "    [*] Press 'Ctrl+C' or 'Q' to gracefully terminate the sensor." "STARTUP"
-
     while ($true) {
         $now = Get-Date
+        # Catch the keypress to trigger a graceful teardown
         if ([console]::KeyAvailable) {
             $key = [console]::ReadKey($true)
             if ($key.Key -eq 'Q' -or ($key.Key -eq 'C' -and $key.Modifiers -match 'Control')) {
                 Write-Host "`n[!] Graceful shutdown initiated by user. Flushing memory..." -ForegroundColor Yellow
-                break
+                break # Breaks the loop and naturally flows into the Phase 3 Teardown block
             }
         }
 
+        # --- CENTRALIZED POLICY SYNC ---
         if (($now - $LastPolicySync).TotalMinutes -ge 60) {
             $LastPolicySync = $now
+
+            # DEVELOPER NOTE: Temporarily lift the DACL lockdown so the engine can
+            # extract the new YAML files to the sigma/ directory without crashing.
             icacls $ScriptDir /reset /T /C /Q | Out-Null
+
             $NewTI = Initialize-SigmaEngine
             [DeepVisibilitySensor]::UpdateThreatIntel($NewTI.Drivers, $NewTI.CmdKeys, $NewTI.CmdTitles, $NewTI.ImgKeys, $NewTI.ImgTitles)
+
+            # Re-apply the anti-tamper lockdown immediately after writing
             Protect-SensorEnvironment
+
             Add-AlertMessage "POLICY SYNC COMPLETE" $cGreen
         }
 
-        $maxDequeue = 500
-        $jsonStr = ""
-
-        while (($maxDequeue-- -gt 0) -and [DeepVisibilitySensor]::EventQueue.TryDequeue([ref]$jsonStr)) {
-            try {
-                if ([string]::IsNullOrWhiteSpace($jsonStr)) { continue }
-
-                # INTERCEPT NATIVE RUST ML ALERTS FROM C# FFI
-                if ($jsonStr.StartsWith("[ML_ALERTS]")) {
-                    $mlPayload = $jsonStr.Substring(11)
-                    $mlResponse = try { $mlPayload | ConvertFrom-Json } catch { $null }
-
-                    if ($mlResponse -and $mlResponse.alerts) {
-                        foreach ($alert in $mlResponse.alerts) {
-                            if ($alert.reason -eq "HEALTH_OK") { continue }
-
-                            if ($alert.score -eq -2.0) {
-                                $ruleName = $alert.reason
-                                Add-AlertMessage "GLOBAL SUPPRESSION: '$ruleName' pruned from Kernel." $cDark
-                                [DeepVisibilitySensor]::SuppressSigmaRule($ruleName)
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`"}"
-                                $script:logBatch.Add($logObj)
-                                continue
-                            }
-
-                            if ($alert.score -eq -1.0) {
-                                Add-AlertMessage $alert.reason $cDark
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
-                                $script:logBatch.Add($logObj)
-
-                                # Extract the pure rule name and inject it into the C# unmanaged memory block
-                                # Reason format: "UEBA SECURED: UAC Bypass Using Iscsicpl - ImageLoad | Mode: Automated Baseline."
-                                $ruleName = $alert.reason -replace "^UEBA SECURED: ", "" -replace " \| Mode:.*", ""
-                                try { [DeepVisibilitySensor]::SuppressProcessRule($alert.process, $ruleName) } catch {}
-                                continue
-                            }
-
-                            if ($alert.score -eq 0.0) { Add-AlertMessage "LEARNING: $($alert.reason)" $cDark; continue }
-
-                            if ($alert.severity -eq "CRITICAL") {
-                                [DeepVisibilitySensor]::TotalAlertsGenerated++
-                                Add-AlertMessage "CRITICAL THREAT: $($alert.reason)" $cRed
-                                Write-Diag "[!] [$($alert.confidence)%] CRITICAL DETECTION: $($alert.reason)" "CRITICAL"
-                            } elseif ($alert.severity -eq "HIGH") {
-                                [DeepVisibilitySensor]::TotalAlertsGenerated++
-                                Add-AlertMessage "HIGH RISK: $($alert.reason)" $cYellow
-                            } elseif ($alert.severity -eq "WARNING") {
-                                Add-AlertMessage "WARNING: $($alert.reason)" $cDark
-                            }
-
-                            if ($alert.severity -match "CRITICAL|HIGH|WARNING") {
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"ValidatedAlert`", `"Type`":`"ThreatDetection`", `"Process`":`"$($alert.process)`", `"PID`":$($alert.pid), `"TID`":$($alert.tid), `"Score`":$($alert.score), `"Severity`":`"$($alert.severity)`", `"Confidence`":$($alert.confidence), `"Details`":`"$($alert.reason)`"}"
-                                $script:logBatch.Add($logObj)
-                            }
-
-                            if ($ArmedMode -and $alert.severity -eq "CRITICAL") {
-                                Invoke-ActiveDefense -ProcName $alert.process -PID_Id $alert.pid -TID_Id $alert.tid -TargetType "Process" -Reason $alert.reason
-                                Invoke-HostIsolation -Reason $alert.reason -TriggeringProcess $alert.process
-                            }
-                        }
-                    }
-                    continue
-                }
-
-                # STANDARD C# ETW ALERTS
-                $evt = try { $jsonStr | ConvertFrom-Json } catch { $null }
-                if ($null -eq $evt) { continue }
-
-                if ($evt.Provider -eq "DiagLog") {
-                    # Route engine diagnostics directly to the log file and HUD initialization window
-                    Write-Diag $evt.Message "ENGINE"
-                    continue
-                }
-                if ($evt.Provider -eq "HealthCheck") { $LastHeartbeat = $now; continue }
-                if ($evt.Provider -eq "Error") { Add-AlertMessage "CORE ENGINE CRASH: $($evt.Message)" $cRed; continue }
-
-                if ($evt.Category -eq "StaticAlert") {
-                    [DeepVisibilitySensor]::TotalAlertsGenerated++
-                    $enrichedJson = $jsonStr.Replace("{`"Category`"", "{$global:EnrichmentPrefix`"Category`"")
-                    $script:logBatch.Add($enrichedJson)
-
-                    if ($evt.Type -match "SensorTampering|ProcessHollowing|PendingRename|UnbackedModule|EncodedCommand|ThreatIntel_Driver") {
-                        Add-AlertMessage "CRITICAL: $($evt.Type) ($($evt.Process))" $cRed
-                        Invoke-ActiveDefense -ProcName $evt.Process -PID_Id $evt.PID -TID_Id $evt.TID -TargetType "Process" -Reason "Critical Execution/Injection/Persistence"
-                    } else {
-                        Add-AlertMessage "$($evt.Type): $($evt.Details)" $cYellow
-                    }
-                }
-                } catch {
-                Write-Diag "DEQUEUE ERROR: $($_.Exception.Message)" "ERROR"
+        # ETW Sensor Health Canary
+        if (($now - $LastHeartbeat).TotalSeconds -ge 60) {
+        try {
+                New-Item "C:\Temp\deepsensor_canary.tmp" -ItemType File -Force -ErrorAction Stop | Out-Null
+                Write-Diag "    [+] Canary .tmp created for ETW heartbeat" "DEBUG"
+            } catch {
+                Write-Diag "    [!] Canary creation failed: $($_.Exception.Message)" "WARN"
             }
         }
 
-        # BATCH SIEM FORWARDING
+        # --- ETW EVENT TRIAGE ---
+        $maxDequeue = 1000
+        $jsonStr = ""
+
+        # DEVELOPER NOTE: Added a 1000-event governor to prevent UI thread starvation during bursts.
+        while (($maxDequeue-- -gt 0) -and [DeepVisibilitySensor]::EventQueue.TryDequeue([ref]$jsonStr)) {
+            if ([string]::IsNullOrWhiteSpace($jsonStr)) { continue }
+
+            $evt = try { $jsonStr | ConvertFrom-Json } catch { $null }
+            if ($null -eq $evt) { continue }
+
+            if ($evt.Provider -eq "HealthCheck") {
+                $LastHeartbeat = $now
+                if ($SensorBlinded) { $SensorBlinded = $false; Add-AlertMessage "SENSOR RECOVERED" $cGreen }
+                continue
+            }
+
+            # [CWE-391] (PowerShell Error Suppression)
+            # [NEW LOGIC: Unmask C# Engine Errors]
+            if ($evt.Provider -eq "Error") {
+                # Surface unmanaged crashes to the UI immediately
+                Add-AlertMessage "CORE ENGINE CRASH: $($evt.Message)" $cRed
+
+                # Log the stack trace to your diagnostic file so you can actually debug it
+                "[$((Get-Date).ToString('HH:mm:ss'))] CRITICAL FAULT: $($evt.Message)" | Out-File -FilePath "$env:ProgramData\DeepSensor\Logs\DeepSensor_Diagnostic.log" -Append
+
+                continue
+            }
+
+            if ($evt.Provider -eq "DiagLog") { continue }
+
+            if ($evt.Category -eq "StaticAlert") {
+                # FAST PATH: High-Fidelity / Zero-Tolerance Kernel Alerts (Bypasses UEBA)
+                if ($evt.Type -match "SensorTampering|ProcessHollowing|PendingRename|UnbackedModule|EncodedCommand") {
+                    $totalAlerts++
+
+                    # Inject host data into the raw JSON string from C#
+                    $enrichedJson = $jsonStr.Replace("{`"Category`"", "{$global:EnrichmentPrefix`"Category`"")
+                    $script:logBatch.Add($enrichedJson)
+
+                    Add-AlertMessage "CRITICAL: $($evt.Type) ($($evt.Process))" $cRed
+
+                    Invoke-ActiveDefense -ProcName $evt.Process -PID_Id $evt.PID -TID_Id $evt.TID -TargetType "Process" -Reason "Critical Execution/Injection/Persistence"
+                }
+                # SLOW PATH: Noise-Prone Alerts (Sigma/Threat Intel) routed to UEBA ML Daemon
+                else {
+                    $dataBatch.Add($evt)
+                }
+            }
+            elseif ($evt.Category -eq "RawEvent") {
+                $totalEvents++
+                $dataBatch.Add($evt)
+            }
+        }
+
+        # --- IPC HANDOFF TO ML ENGINE ---
+        if (($now - $LastMlHealthPing).TotalSeconds -ge 120) {
+            $LastMlHealthPing = $now
+            $dataBatch.Add([PSCustomObject]@{ Type = "Synthetic_Health_Check" })
+        }
+
+        if ($dataBatch.Count -gt 0) {
+            $mlSent++
+
+            # 1. Backpressure Awareness
+            $currentPressure = [DeepVisibilitySensor]::EventQueue.Count
+
+            # 2. Burst-Throttled Payload
+            $payload = @{
+                events   = $dataBatch
+                pressure = $currentPressure
+            } | ConvertTo-Json -Compress -Depth 10
+
+            $pyIn.WriteLine($payload); $pyIn.Flush()
+
+            # 3. STRICT 1-TO-1 IPC READ
+            $timeout = 500
+            while ($timeout-- -gt 0 -and -not $pyProcess.HasExited) {
+
+                # Wait for the single consolidated JSON line from Python
+                $line = $pyOut.ReadLine()
+
+                if (-not [string]::IsNullOrWhiteSpace($line)) {
+                    $pyResponse = try { $line | ConvertFrom-Json } catch { $null }
+                    if ($null -eq $pyResponse) { continue }
+
+                    if ($pyResponse.daemon_error) {
+                        Add-AlertMessage "ML ERROR: $($pyResponse.daemon_error)" $cRed; break
+                    }
+
+                    foreach ($alert in $pyResponse.alerts) {
+                        # A. HEARTBEAT SYNCHRONIZATION
+                        if ($alert.reason -eq "HEALTH_OK") {
+                            $LastMlHeartbeat = [datetime]::UtcNow
+                            if ($MlBlinded) { $MlBlinded = $false; Add-AlertMessage "ML ENGINE RECOVERED" $cGreen }
+                            continue
+                        }
+
+                        # B. GLOBAL RULE PRUNING
+                        if ($alert.score -eq -2.0) {
+                            $ruleName = $alert.reason
+                            Add-AlertMessage "GLOBAL SUPPRESSION: '$ruleName' pruned from Kernel." $cDark
+                            [DeepVisibilitySensor]::SuppressSigmaRule($ruleName)
+                            $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`"}"
+                            $script:logBatch.Add($logObj)
+                            continue
+                        }
+
+                        # C. UEBA MILESTONE
+                        if ($alert.score -eq -1.0) {
+                            Add-AlertMessage $alert.reason $cDark
+                            $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
+                            $script:logBatch.Add($logObj)
+                            continue
+                        }
+
+                        # D. LEARNING STATE
+                        if ($alert.score -eq 0.0) {
+                            Add-AlertMessage "LEARNING: $($alert.reason)" $cDark
+                            continue
+                        }
+
+                        # E. SEVERITY-AWARE TRIAGE
+                        if ($alert.severity -eq "CRITICAL") {
+                            $totalAlerts++; Add-AlertMessage "CRITICAL THREAT: $($alert.reason)" $cRed
+                            Write-Diag "[!] [$($alert.confidence)%] CRITICAL DETECTION: $($alert.reason)" "CRITICAL"
+                        } elseif ($alert.severity -eq "HIGH") {
+                            $totalAlerts++; Add-AlertMessage "HIGH RISK: $($alert.reason)" $cYellow
+                        } elseif ($alert.severity -eq "WARNING") {
+                            Add-AlertMessage "WARNING: $($alert.reason)" $cDark
+                        } else { continue }
+
+                        # F. SIEM LOGGING
+                        $logObj = "{$global:EnrichmentPrefix`"Category`":`"ValidatedAlert`", `"Type`":`"ThreatDetection`", `"Process`":`"$($alert.process)`", `"PID`":$($alert.pid), `"TID`":$($alert.tid), `"Score`":$($alert.score), `"Severity`":`"$($alert.severity)`", `"Confidence`":$($alert.confidence), `"Details`":`"$($alert.reason)`"}"
+                        $script:logBatch.Add($logObj)
+
+                        # G. THE ARMED MODE GATEKEEPER
+                        if ($ArmedMode -and $alert.severity -eq "CRITICAL") {
+                            Invoke-ActiveDefense -ProcName $alert.process -PID_Id $alert.pid -TID_Id $alert.tid -TargetType "Process" -Reason $alert.reason
+                            Invoke-HostIsolation -Reason $alert.reason -TriggeringProcess $alert.process
+                        }
+                    }
+                    break
+                }
+                Start-Sleep -Milliseconds 10
+            }
+            $dataBatch.Clear()
+        }
+
+        # --- SIEM API FORWARDING & LOG ROTATION ---
         if ($script:logBatch.Count -gt 0) {
+            if ($SiemEndpoint) {
+                try {
+                    $siemPayload = '{"events": [' + ($script:logBatch -join ",") + ']}'
+                    Invoke-RestMethod -Uri $SiemEndpoint -Method Post -Headers @{"Authorization"="Splunk $SiemToken"} -Body $siemPayload -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+                } catch { }
+            }
+
+            if ((Test-Path $LogPath) -and (Get-Item $LogPath).Length -gt 50MB) {
+                Rename-Item -Path $LogPath -NewName ($LogPath.Replace(".jsonl", "_$(Get-Date -f 'yyyyMMdd_HHmm').jsonl"))
+            }
             [System.IO.File]::AppendAllText($LogPath, ($script:logBatch -join "`r`n") + "`r`n")
             $script:logBatch.Clear()
         }
 
-        # ETW HEALTH CANARY: Write a temp file every 60 seconds to prove the Kernel Listener is alive
-        if (($now - $LastHeartbeatWrite).TotalSeconds -ge 60) {
-            $LastHeartbeatWrite = $now
-            $CanaryPath = Join-Path $env:TEMP "deepsensor_canary.tmp"
-            $null = New-Item -ItemType File -Path $CanaryPath -Force
-            Remove-Item -Path $CanaryPath -Force -ErrorAction SilentlyContinue
+        # --- HEALTH WATCHDOGS ---
+        $eState = if (($now - $LastHeartbeat).TotalSeconds -le 180) { "Good" } else { "BAD" }
+        $mState = if (($now - $LastMlHeartbeat).TotalSeconds -le 300) { "Good" } else { "BAD" }
+
+        Draw-Dashboard -Events $totalEvents -MlSent $mlSent -Alerts $totalAlerts -EtwHealth $eState -MlHealth $mState
+
+        if ($eState -eq "BAD" -and -not $SensorBlinded) { $SensorBlinded = $true; Add-AlertMessage "CRITICAL: SENSOR BLINDED" $cRed }
+        if ($mState -eq "BAD" -and -not $MlBlinded) { $MlBlinded = $true; Add-AlertMessage "CRITICAL: ML ENGINE FROZEN" $cRed }
+
+        # --- NATIVE UI UNLOCKER ---
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'C' -and $key.Modifiers -match 'Control') {
+                Write-Host "`n[!] Manual CTRL+C Interrupt Detected. Initiating teardown..." -ForegroundColor Yellow
+                break
+            }
         }
 
-        # DRAW HUD WITH C# STATIC COUNTERS
-        $eState = if (($now - $LastHeartbeat).TotalSeconds -le 180) { "Good" } else { "BAD" }
-        $totalParsed = [DeepVisibilitySensor]::TotalEventsParsed
-        $totalAlerts = [DeepVisibilitySensor]::TotalAlertsGenerated
-        $totalMlEvals = [DeepVisibilitySensor]::TotalMlEvals
-
-        Draw-Dashboard -Events $totalParsed -MlEvals $totalMlEvals -Alerts $totalAlerts -EtwHealth $eState -MlHealth "Native DLL"
-
-        Start-Sleep -Milliseconds 250
+        Start-Sleep -Milliseconds 500
     }
 } catch {
+    # If the main Orchestrator thread crashes, log it before tearing down
     Write-Host "`n[!] ORCHESTRATOR FATAL CRASH: $($_.Exception.Message)" -ForegroundColor Red
     "[$((Get-Date).ToString('HH:mm:ss'))] ORCHESTRATOR FATAL CRASH: $($_.Exception.Message)" | Out-File -FilePath "$env:ProgramData\DeepSensor\Logs\DeepSensor_Diagnostic.log" -Append
 } finally {
@@ -960,23 +1256,43 @@ try {
     Write-Host "`n[*] Initiating Graceful Shutdown..." -ForegroundColor Cyan
     try { [console]::TreatControlCAsInput = $false } catch {}
 
-    # C# now handles the entire synchronized teardown of the DLL and ETW
-    Write-Host "    [*] Finalizing Kernel Telemetry & ML Database..." -ForegroundColor Gray
+    # 1. Stop ETW Session and flush internal C# caches
+    #
     try { [DeepVisibilitySensor]::StopSession() } catch {}
 
+    # 2. Terminate Python Daemon Gracefully
+    if ($pyProcess -and -not $pyProcess.HasExited) {
+        Write-Host "    [*] Sending QUIT signal to ML Daemon..." -ForegroundColor Gray
+        $pyProcess.StandardInput.WriteLine("QUIT")
+        $pyIn.Flush()
+        # Give Python enough time to commit the SQLite database to disk
+        Start-Sleep -Milliseconds 1200
+
+        if (-not $pyProcess.HasExited) {
+            Stop-Process -Id $pyProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 3. Restore Project Directory Permissions (Unlock iacls)
+    # DEVELOPER NOTE: Resets inheritance and removes the 'Deny' ACEs applied to the toolkit folder.
     Write-Host "    [*] Unlocking project directory permissions..." -ForegroundColor Gray
     $null = icacls $ScriptDir /reset /T /C /Q
 
+    # 4. Clean up temporary libraries but preserve logs
+    # DEVELOPER NOTE: Removes the TraceEvent NuGet artifacts from C:\Temp while sparing
+    # the .jsonl events and .log diagnostic files.
     Write-Host "    [*] Cleaning up temporary library artifacts..." -ForegroundColor Gray
     $TempLibPath = "C:\Temp\TraceEventPackage"
     if (Test-Path $TempLibPath) {
         Remove-Item -Path $TempLibPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    # DEVELOPER NOTE: Remove stray reference DLLs (like netstandard) that the CLR
+    # or Add-Type compiler occasionally leaks into the root Temp directory during JIT.
     $StrayNetStandard = "C:\Temp\netstandard.dll"
     if (Test-Path $StrayNetStandard) {
         Remove-Item -Path $StrayNetStandard -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "`n[+] Sensor Teardown Complete. Log artifacts preserved in C:\ProgramData\DeepSensor\Logs & \Data." -ForegroundColor Green
+    Write-Host "`n[+] Sensor Teardown Complete. Log artifacts preserved in C:\Temp." -ForegroundColor Green
 }
