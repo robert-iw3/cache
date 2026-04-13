@@ -1,0 +1,25 @@
+# /etc/apparmor.d/usr.bin.socat
+#include <tunables/global>
+
+profile socat /usr/bin/socat {
+  #include <abstractions/base>
+
+  network inet,
+  network inet6,
+
+  /usr/lib/** r,
+  /etc/** r,
+
+  # Socat is extremely dangerous for C2 (reverse shells)
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/python* x,
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+  deny /usr/bin/nc x,
+
+  owner @{HOME}/** rw,
+  owner /tmp/** rw,
+
+  audit deny /** w,
+}

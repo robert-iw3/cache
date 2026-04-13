@@ -1,0 +1,41 @@
+title: KimJongRAT Loader Execution
+id: f1b3c8d9-e0a4-f2c8-b1d7-e6a5f4c3b2a0
+related:
+    - https://unit42.paloaltonetworks.com/kimjongrat-stealer-variant-powershell/
+status: experimental
+description: Detects the execution patterns of the KimJongRAT PE or PowerShell variant loaders, specifically rundll32 executing a DLL from AppData\Local with export 's' or powershell executing '1.ps1' from AppData\Local with '1.log' as an argument.
+references:
+    - https://unit42.paloaltonetworks.com/kimjongrat-stealer-variant-powershell/
+author:
+date: 2025-06-20
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_pe:
+        Image|endswith: '\rundll32.exe'
+        CommandLine|all:
+            - '*\AppData\Local\sys.dll*'
+            - ',s'
+    selection_ps:
+        Image|endswith: '\powershell.exe'
+        CommandLine|all:
+            - '*\AppData\Local\1.ps1*'
+            - '*\AppData\Local\1.log*'
+    condition: 1 of selection_*
+fields:
+    - ComputerName
+    - User
+    - CommandLine
+    - Image
+tags:
+    - attack.execution
+    - attack.t1059.001
+    - attack.t1059.003
+    - attack.t1105
+    - attack.t1027
+    - attack.collection
+    - attack.command_and_control
+falsepositives:
+    - Legitimate software using similar rundll32 or powershell patterns from AppData (less likely for these specific file names/exports).
+level: high

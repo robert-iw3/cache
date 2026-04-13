@@ -1,0 +1,41 @@
+title: Defense Evasion - Add-MpPreference Targeting User or Temp via PowerShell
+id: 7165e1f1-4d7d-437b-b4b3-63a4d894ccba
+status: experimental
+description: >-
+  Detects suspicious use of Add-MpPreference via PowerShell where exclusions are
+  added to Users or Temp directories — common evasion technique to bypass
+  Defender scans.
+references:
+  - >-
+    https://learn.microsoft.com/en-us/powershell/module/defender/add-mppreference
+  - https://attack.mitre.org/techniques/T1562/001/
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+  - car.2019-04-001
+author: Firestrike::Labs
+date: 2025/07/06
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_cmdline:
+    CommandLine|contains|all:
+      - Add-MpPreference
+    CommandLine|contains:
+      - Users
+      - Temp
+  selection_parent:
+    ParentImage|endswith: \powershell.exe
+  condition: selection_cmdline and selection_parent
+fields:
+  - CommandLine
+  - ParentImage
+  - Image
+  - User
+falsepositives:
+  - >-
+    Legitimate system administration using Defender exclusion settings on user
+    directories, especially in enterprise environments with custom AV configs.
+  - May get false positives from other security products in the environment
+level: medium

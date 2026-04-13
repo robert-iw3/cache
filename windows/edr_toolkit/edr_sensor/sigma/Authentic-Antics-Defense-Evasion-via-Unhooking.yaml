@@ -1,0 +1,37 @@
+title: AUTHENTIC ANTICS Defense Evasion via API (Un)Hooking
+id: 930a0095-29fb-4d38-99cd-33280e15d8d5
+status: experimental
+description: Detects API hooking or unhooking attempts targeting functions in ntdll.dll and iertutil.dll. This technique is used by the AUTHENTIC ANTICS malware for defense evasion. The malware unhooks several registry-related functions in ntdll.dll to avoid monitoring by security tools and hooks IEConfiguration_GetBool in iertutil.dll as part of its operation.
+references:
+  - https://www.ncsc.gov.uk/static-assets/documents/malware-analysis-reports/authentic-antics/ncsc-mar-authentic_antics.pdf
+author: Rob Weber
+date: 2025-07-26
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+  - malware.authentic_antics
+logsource:
+    # This detection requires an EDR or other sensor that can log API hooking/unhooking events.
+    # The fields used (e.g., TargetModule, ApiFunction) are placeholders and may need to be adapted to the specific log source schema.
+  category: api_hooking
+  product: windows
+detection:
+  selection_ntdll_unhook:
+        # AUTHENTIC ANTICS unhooks registry functions in ntdll.dll to evade defenses
+    TargetModule|endswith: '\ntdll.dll'
+    ApiFunction:
+      - 'NtOpenKey'
+      - 'NtOpenKeyEx'
+      - 'NtCreateKey'
+      - 'NtEnumerateKey'
+      - 'NtEnumerateValue'
+      - 'NtQueryKey'
+      - 'NtQueryValueKey'
+  selection_iertutil_hook:
+        # AUTHENTIC ANTICS hooks a specific function in iertutil.dll
+    TargetModule|endswith: '\iertutil.dll'
+    ApiFunction: 'IEConfiguration_GetBool'
+  condition: 1 of selection_*
+falsepositives:
+  - Legitimate security software (antivirus, EDR, HIPS), virtualization software, and application compatibility tools often use API hooking to function. This detection will likely require significant tuning to baseline legitimate software in your environment.
+level: medium

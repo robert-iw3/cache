@@ -1,0 +1,13 @@
+### docker-compose.client.yml ###
+version: '3'
+services:
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    ports:
+      - "9881:9881"  # Listens for Windows JSON POSTs
+    environment:
+      - SERVER_URL=http://your-server-host:9880/  # Point to server endpoint; adjust
+      - BATCH_SIZE=1000
+      - CHUNK_SIZE=1000

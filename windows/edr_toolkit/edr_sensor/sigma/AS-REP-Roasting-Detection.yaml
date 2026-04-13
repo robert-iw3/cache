@@ -1,0 +1,28 @@
+title: Potential AS-REP Roasting Attack
+id: f1d8f257-31fe-4fec-84fc-b8414f5b73c0
+status: experimental
+description: |
+  Detects potential AS-REP Roasting attacks. This technique targets user accounts that have Kerberos pre-authentication disabled.
+  An attacker can request an authentication ticket (TGT) for such an account and receive an encrypted TGT that can be cracked offline to recover the user's password.
+  This rule looks for successful TGT requests (Event ID 4768) where the pre-authentication type is 0, indicating it was disabled.
+author: RW
+date: 2025-08-22
+tags:
+  - attack.credential_access
+  - attack.t1558.004
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4768 # A Kerberos authentication ticket (TGT) was requested.
+    Status: '0x0' # Successful ticket request.
+    ServiceName: 'krbtgt' # The service for TGT requests.
+    PreAuthenticationType: '0' # This value indicates that pre-authentication was not required, which is the core of the AS-REP Roasting attack.
+  filter:
+    TargetUserName|endswith: '$' # Exclude machine accounts, which commonly have pre-authentication disabled but are not typical targets due to their complex passwords.
+  condition: selection and not filter
+falsepositives:
+  - Some legitimate user accounts may have pre-authentication disabled for compatibility reasons with legacy systems or specific applications.
+  - Investigate the user account to determine if this configuration is expected. Accounts with this setting should be reviewed and have strong, complex passwords.
+level: medium

@@ -1,0 +1,76 @@
+policy_module(c2_restrict, 1.0)
+
+# =============================================================================
+# c2_restrict - Restrictive policy for tools commonly abused by Linux C2
+# Covers: curl, wget, socat, nc/netcat, openssl, python3, bash, ssh, perl, ruby
+# =============================================================================
+
+# Types for each restricted tool
+type c2_curl_t;
+type c2_wget_t;
+type c2_socat_t;
+type c2_nc_t;
+type c2_openssl_t;
+type c2_python_t;
+type c2_bash_t;
+type c2_ssh_t;
+type c2_perl_t;
+type c2_ruby_t;
+
+# Domain transitions
+domain_type(c2_curl_t)
+domain_entry_file(c2_curl_t, curl_exec_t)
+
+domain_type(c2_wget_t)
+domain_entry_file(c2_wget_t, wget_exec_t)
+
+domain_type(c2_socat_t)
+domain_entry_file(c2_socat_t, socat_exec_t)
+
+domain_type(c2_nc_t)
+domain_entry_file(c2_nc_t, nc_exec_t)
+
+domain_type(c2_openssl_t)
+domain_entry_file(c2_openssl_t, openssl_exec_t)
+
+domain_type(c2_python_t)
+domain_entry_file(c2_python_t, python_exec_t)
+
+domain_type(c2_bash_t)
+domain_entry_file(c2_bash_t, bash_exec_t)
+
+domain_type(c2_ssh_t)
+domain_entry_file(c2_ssh_t, ssh_exec_t)
+
+domain_type(c2_perl_t)
+domain_entry_file(c2_perl_t, perl_exec_t)
+
+domain_type(c2_ruby_t)
+domain_entry_file(c2_ruby_t, ruby_exec_t)
+
+# Common restrictions for all C2 tools
+gen_require(`
+    type shell_exec_t, bin_t, usr_t;
+')
+
+# Deny execution of shells and other dangerous tools from these contexts
+dontaudit { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_bash_t c2_ssh_t c2_perl_t c2_ruby_t } shell_exec_t:file execute;
+
+# Allow limited network (DNS + HTTPS only for most tools)
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_ssh_t } self:tcp_socket create_stream_socket_perms;
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_ssh_t } self:udp_socket create_socket_perms;
+
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_ssh_t } dns_port_t:tcp_socket name_connect;
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_ssh_t } http_port_t:tcp_socket name_connect;
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_ssh_t } http_cache_port_t:tcp_socket name_connect;
+
+# Restrict file writes to user home and /tmp only
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_bash_t c2_ssh_t c2_perl_t c2_ruby_t } user_home_dir_t:dir { list read };
+allow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_bash_t c2_ssh_t c2_perl_t c2_ruby_t } user_home_t:file { read write getattr };
+
+# Deny execution from temporary directories (strong anti-dropper)
+dontaudit { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_bash_t c2_ssh_t c2_perl_t c2_ruby_t } tmp_t:dir execute;
+dontaudit { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_bash_t c2_ssh_t c2_perl_t c2_ruby_t } tmp_t:file execute;
+
+# Audit denials for visibility
+auditallow { c2_curl_t c2_wget_t c2_socat_t c2_nc_t c2_openssl_t c2_python_t c2_bash_t c2_ssh_t c2_perl_t c2_ruby_t } self:process { fork transition };

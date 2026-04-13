@@ -1,0 +1,43 @@
+---
+services:
+  agent-collector:
+    build:
+      context: ../..
+      dockerfile: v3.0/agent/Dockerfile
+    container_name: c2-agent-collector
+    privileged: true
+    network_mode: host
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:rw
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+      - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - /proc:/host/proc:ro
+      - ./config.ini:/app/config.ini:ro  # Agent config
+      - ./ca.crt:/app/ca.crt:ro  # Mount CA cert from host
+    environment:
+      - TARGET_INTERFACE=${TARGET_INTERFACE:-wlo1}
+      - MODE=agent
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    secrets:
+      - ca_cert_hash  # If using hash in config
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "libbpf_collector.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+secrets:
+  ca_cert_hash:
+    file: ./secrets/ca_cert_hash.txt  # Create with hash

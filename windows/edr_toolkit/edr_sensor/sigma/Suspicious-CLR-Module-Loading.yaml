@@ -1,0 +1,32 @@
+title: Suspicious CLR Module Loading by IIS Worker Process
+id: 0f406f13-9fc4-4dbe-a9a5-35d360ac7cfa
+status: experimental
+description: Detects the loading of suspicious Common Language Runtime (CLR) modules into the IIS worker process (w3wp.exe). This behavior is a strong indicator of the Godzilla in-memory webshell, which loads these modules to extend its functionality for tasks like remote execution, file system enumeration, and process listing.
+references:
+  - https://kerberpoasting.medium.com/sharepoint-of-no-return-analysing-the-godzilla-webshell-cve-2025-53770-cve-2025-53771-a4e8e6a74bd1
+author: Rob Weber
+date: 2025-07-26
+tags:
+  - attack.defense_evasion
+  - attack.execution
+  - attack.t1055
+  - attack.t1574.002
+logsource:
+  category: image_load
+  product: windows
+detection:
+  selection_process:
+        # The process loading the module is the IIS worker process
+    Image|endswith: '\w3wp.exe'
+  selection_module:
+        # These are known module names used by the Godzilla webshell
+    ImageLoaded|endswith:
+      - '\LoadLibrary.dll'
+      - '\RemoteExec.dll'
+      - '\FileList.dll'
+      - '\ProcessList.dll'
+      - '\Information.dll'
+  condition: selection_process and selection_module
+falsepositives:
+  - It is highly unlikely that legitimate applications would use modules with these specific names. False positives are not expected.
+level: high

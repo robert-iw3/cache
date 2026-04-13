@@ -1,0 +1,53 @@
+title: UAC-0001 APT28 Macro Execution Leading to PowerShell
+id: 1b8d69e4-a54c-4a3b-8d77-017e8c3f59e9
+status: stable
+description: >-
+  Detects the execution of PowerShell by a Microsoft Office application. This behavior is consistent with the UAC-0001 (APT28) campaign described by CERT-UA, where a malicious document's macro was used to launch PowerShell for installing the BEARDSHELL backdoor and COVENANT C2 framework components.
+references:
+  - https://cert.gov.ua/article/6284080
+author:
+date: 2025/06/24
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.t1566.001
+  - apt.apt28
+  - cti.uac-0001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  # Selection for the parent process being a Microsoft Office application
+  parent_process:
+    ParentImage|endswith:
+      - '\winword.exe'
+      - '\excel.exe'
+      - '\powerpnt.exe'
+
+  # Selection for the child process being PowerShell
+  child_process:
+    Image|endswith: '\powershell.exe'
+
+  # Selection for suspicious command-line arguments often used for obfuscation and policy bypass
+  suspicious_args:
+    CommandLine|contains:
+      - ' -enc'          # EncodedCommand
+      - ' -encoded'
+      - ' -ep bypass'     # ExecutionPolicy Bypass
+      - ' -executionpolicy bypass'
+      - ' -nop'           # NoProfile
+      - ' -noprofile'
+      - ' -w hidden'      # WindowStyle Hidden
+      - ' -windowstyle hidden'
+      - ' -noni'          # NonInteractive
+      - ' -noninteractive'
+      - 'IEX '           # Invoke-Expression, common for downloading and executing scripts in memory
+      - 'New-Object Net.WebClient' # Often used for downloading payloads
+      - '.DownloadString'
+      - '.DownloadFile'
+
+  condition: parent_process and child_process and suspicious_args
+falsepositives:
+  - Legitimate administration scripts or automation tools that are launched from within an Office document (e.g., via a macro).
+  - However, the combination with suspicious arguments significantly reduces the likelihood of false positives. It's crucial to investigate the full command line and the context of the execution.
+level: high

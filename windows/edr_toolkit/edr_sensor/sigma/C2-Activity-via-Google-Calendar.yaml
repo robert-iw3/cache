@@ -1,0 +1,58 @@
+title: MeetC2 Google Calendar C2 Activity
+id: 33fe86a0-cfda-4c96-9f95-1d8f99476297
+status: experimental
+description: >-
+  Detects potential Command and Control (C2) activity using Google Calendar, inspired by the MeetC2 framework.
+  This rule combines searches across Google Workspace audit logs and network traffic to identify suspicious event content, sharing patterns, and API beaconing.
+author: RW
+date: 2025-09-06
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+  - attack.t1102.002
+logsource:
+  - product: google_workspace
+    service: calendar
+  - category: proxy
+    product:
+detection:
+  # Part 1: Detects suspicious Google Calendar event content or sharing based on the MeetC2 framework.
+  # This requires Google Workspace audit logs.
+  gcp_summary:
+    gcp.calendar.summary|contains|all:
+      - 'Meeting from nobody:'
+      - '[COMMAND]'
+  gcp_description:
+    gcp.calendar.description|contains|all:
+      - '[OUTPUT]'
+      - '[/OUTPUT]'
+  gcp_acl:
+    gcp.audit.method_name|startswith: 'calendar.acl.' # Matches calendar.acl.create, calendar.acl.insert etc.
+    gcp.calendar.acl.scope.value|endswith: 'gserviceaccount.com'
+
+  # Part 2: Detects C2 beaconing to the Google Calendar API.
+  # This requires proxy, firewall, or EDR network logs.
+  network_beacon:
+    url.original|contains|all:
+      - 'www.googleapis.com/calendar/v3/calendars/'
+      - '/events'
+    http.method: 'GET' # The PoC uses GET requests to poll for commands.
+  # This filter is intended to exclude legitimate browser and application traffic.
+  # This list may need to be customized for your environment.
+  filter_legit_process:
+    process.name|endswith:
+      - '\chrome.exe'
+      - '\msedge.exe'
+      - '\firefox.exe'
+      - '\outlook.exe'
+      - '\teams.exe'
+
+  timeframe: 10m
+  condition: >
+    (1 of gcp_*) or
+    (network_beacon and not filter_legit_process | count() > 15 by source.ip)
+falsepositives:
+  - Legitimate applications using the Google Calendar API may generate a high volume of requests.
+  - Calendar sharing with service accounts for legitimate automation purposes can also trigger this rule.
+  - Tuning of the beaconing threshold and process exclusion list is recommended.
+level: medium

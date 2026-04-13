@@ -1,0 +1,55 @@
+title: Privileged Account Creation or MFA Method Addition
+id: e5336cd9-8397-4745-a1b8-3caed9f28a60
+status: experimental
+description: Detects the creation of a new user, the addition of a user to a privileged group, or the registration of a new Multi-Factor Authentication (MFA) method. Adversaries may perform these actions to create persistent access, either by creating new privileged accounts or by adding their own authentication methods to a compromised account.
+references:
+  - Threat Intel ID: 6e487ba759c8e80223efef2a739cd68b6586a6454f568bafdb580d896b47660a
+author: RW
+date: 2025-08-19
+tags:
+  - attack.persistence
+  - attack.t1136
+  - attack.t1098
+logsource:
+  product: azure
+  service: auditlogs
+detection:
+  selection_create_user:
+    # Detects the creation of a new user account
+    category: 'UserManagement'
+    activityDisplayName: 'Add user'
+    result: 'success'
+  selection_add_to_privileged_group:
+    # Detects a user being added to a highly privileged role
+    category: 'GroupManagement'
+    activityDisplayName: 'Add member to group'
+    result: 'success'
+    targetResources.0.displayName|contains:
+      # Note: This list should be customized to your environment's definition of privileged roles.
+      - 'Global Administrator'
+      - 'Privileged Role Administrator'
+      - 'User Administrator'
+      - 'Security Administrator'
+      - 'Exchange Administrator'
+      - 'SharePoint Administrator'
+      - 'Teams Administrator'
+      - 'Conditional Access Administrator'
+      - 'Helpdesk Administrator'
+      - 'Billing Administrator'
+      - 'Compliance Administrator'
+  selection_mfa_add:
+    # Detects the registration or update of MFA methods for a user
+    category: 'UserManagement'
+    result: 'success'
+    activityDisplayName:
+      - 'User registered all required security info'
+      - 'User registered security info'
+      - 'User updated security info'
+      - 'Admin updated security info'
+  condition: 1 of them
+falsepositives:
+  - Legitimate creation of new administrative users by IT staff.
+  - Standard user provisioning workflows that add users to administrative groups.
+  - Users legitimately setting up or updating their MFA devices.
+  - Correlation with other suspicious activities (e.g., logon from a new location) is highly recommended to increase fidelity.
+level: medium

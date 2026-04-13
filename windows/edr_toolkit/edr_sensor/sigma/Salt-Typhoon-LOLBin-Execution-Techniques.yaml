@@ -1,0 +1,53 @@
+title: Salt Typhoon LOLBin Execution Techniques
+id: bc526ef8-fe88-413c-9d05-a12aacf0327a
+status: experimental
+description: Detects the use of LOLBins such as BITSAdmin, CertUtil, and PowerShell for command execution and file download/transfer operations. This behavior is commonly associated with the threat actor Salt Typhoon.
+references:
+author: RW
+date: 2025-07-31
+tags:
+  - attack.t1059
+  - attack.t1059.001
+  - attack.t1105
+  - attack.t1197
+  - threat_group.salt_typhoon
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_bitsadmin:
+        # Detects BITSAdmin used for file transfers, a common method for downloading tools.
+    Image|endswith: '\bitsadmin.exe'
+    CommandLine|contains:
+      - '/transfer'
+      - '/create'
+  selection_certutil_download:
+        # Detects CertUtil used to download remote files.
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains|all:
+      - '-urlcache'
+      - '-f'
+  selection_certutil_decode:
+        # Detects CertUtil used to decode base64 encoded files, often to drop malware.
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains: '-decode'
+  selection_powershell:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+        # Detects suspicious PowerShell execution via encoded commands or download cradles.
+    CommandLine|contains:
+      - ' -e '
+      - ' -en '
+      - ' -enc '
+      - ' -encodedcommand '
+      - 'DownloadFile'
+      - 'DownloadString'
+      - 'Invoke-Expression'
+      - 'IEX '
+      - 'Net.WebClient'
+  condition: 1 of them
+falsepositives:
+  - Legitimate administrative scripts, software installers, or management tools may use these commands.
+  - Filter based on known parent processes, user accounts, or specific command-line arguments associated with legitimate tools in your environment.
+level: medium

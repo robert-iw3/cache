@@ -1,0 +1,26 @@
+title: Stealthy Email Exfiltration via Outlook API
+id: 0d2b648b-189f-4f3f-ac21-a1c9bcb0465d
+status: experimental
+description: Detects an attempt to send an email via the Outlook API with the 'SaveToSentItems' flag set to 'false'. This technique is used by the AUTHENTIC ANTICS malware to exfiltrate data without leaving a trace in the user's Sent Items folder.
+references:
+  - https://www.ncsc.gov.uk/static-assets/documents/malware-analysis-reports/authentic-antics/ncsc-mar-authentic_antics.pdf
+author: Rob Weber
+date: 2025-07-26
+tags:
+  - attack.exfiltration
+  - attack.t1567
+  - malware.authentic_antics
+logsource:
+  category: proxy
+detection:
+  selection:
+    cs-method: 'POST'
+    # Detects API call to the Outlook sendMail endpoint
+    c-uri|endswith: '/api/v2.0/me/sendMail'
+    # Detects the parameter that prevents the email from being saved in the Sent Items folder
+    # Note: The field for the POST body might vary across log sources (e.g., c-body, http.request.body.content).
+    c-body|contains: '"SaveToSentItems":"false"'
+  condition: selection
+falsepositives:
+  - Legitimate third-party applications or automation scripts that interact with the Outlook API might use this functionality. Tuning may be required to exclude legitimate application user-agents or source IPs.
+level: high

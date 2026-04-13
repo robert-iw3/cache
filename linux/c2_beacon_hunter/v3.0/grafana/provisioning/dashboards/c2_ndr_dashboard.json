@@ -1,0 +1,67 @@
+{
+  "title": "C2 NDR Enterprise Console v3.0",
+  "uid": "c2_ndr_enhanced",
+  "refresh": "5s",
+  "panels": [
+    {
+      "title": "Real-Time Threat Severity (ML Score)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "C2_NDR_Postgres" },
+          "rawSql": "SELECT score FROM flows WHERE suppressed = 0 ORDER BY timestamp DESC LIMIT 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Active SOAR Containments (Last 24h)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "C2_NDR_Postgres" },
+          "rawSql": "SELECT COUNT(*) FROM flows WHERE score >= 90 AND timestamp > EXTRACT(EPOCH FROM (NOW() - INTERVAL '24 hours'))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" } } }
+    },
+    {
+      "title": "C2 Beaconing Heatmap by Subnet (Last 6h)",
+      "type": "heatmap",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "C2_NDR_Postgres" },
+          "format": "table",
+          "rawSql": "SELECT TO_TIMESTAMP(timestamp) as time, (dst_ip::inet - '0.0.0.0'::inet) % 255 as subnet_id, score FROM flows WHERE timestamp > EXTRACT(EPOCH FROM (NOW() - INTERVAL '6 hours'))"
+        }
+      ]
+    },
+    {
+      "title": "Agent Telemetry Health (Last Hour)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "C2_NDR_Postgres" },
+          "rawSql": "SELECT agent_id, COUNT(*) as events_last_hour, MAX(TO_TIMESTAMP(timestamp)) as last_heartbeat FROM flows GROUP BY agent_id"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39
+}

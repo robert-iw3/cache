@@ -1,0 +1,48 @@
+title: Suspicious Protected Process Light (PPL) Creation
+id: 25402ce9-9f57-47bf-9217-cdcbce884364
+status: experimental
+description: >-
+  Detects the creation of processes with Protected Process Light (PPL) enabled that are not on a list of common legitimate PPL processes.
+  This technique can be used by adversaries to protect their malicious processes from being tampered with by security solutions.
+author: RW
+date: 2025-08-23
+tags:
+  - attack.t1055
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_ppl:
+        # Detects processes created with any PPL level
+    ProtectionLevel|endswith:
+      - 'light'
+      - 'tcb'
+  selection_poc:
+        # Detects the specific PoC tool from the research article
+    ParentImage|endswith: '\CreateProcessAsPPL.exe'
+  filter_legit:
+        # This list contains common Windows and AV processes that run as PPL.
+        # It should be tuned for your environment to avoid false positives from third-party software.
+    Image|endswith:
+      - '\lsass.exe'
+      - '\smss.exe'
+      - '\wininit.exe'
+      - '\services.exe'
+      - '\MsMpEng.exe'
+      - '\NisSrv.exe'
+      - '\SecurityHealthService.exe'
+      - '\svchost.exe'
+      - '\fontdrvhost.exe'
+      - '\dwm.exe'
+      - '\csrss.exe'
+      - '\atiesrxx.exe'
+      - '\atieclxx.exe'
+      - '\audiodg.exe'
+      - '\sihost.exe'
+      - '\taskhostw.exe'
+      - '\RuntimeBroker.exe'
+  condition: (selection_ppl and not filter_legit) or selection_poc
+falsepositives:
+  - Legitimate third-party security products or other low-level utilities may use PPL. Their executables should be added to the 'filter_legit' list to tune out noise.
+level: medium
+

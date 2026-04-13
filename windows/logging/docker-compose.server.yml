@@ -1,0 +1,21 @@
+### docker-compose.server.yml ###
+---
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "9880:9880"
+    volumes:
+      - D:\Logs\parsed:/app/parsed  # NEW: Maps the output directory to the host
+    environment:
+      - OUTPUT_DIR=/app/parsed      # NEW: Tells Python where to write
+      - OUTPUT_TYPE=Elasticsearch  # Options: Splunk, Elasticsearch, File
+      - SPLUNK_HEC_URL=  # For Splunk HEC/UF
+      - SPLUNK_HEC_TOKEN=
+      - ELASTIC_URL=http://localhost:9200  # For Elastic API/Logstash/Agent
+      - ELASTIC_INDEX=logs-ecs
+      - BATCH_SIZE=1000
+      - USE_ASYNC=True
+      - CHUNK_SIZE=1000

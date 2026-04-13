@@ -1,0 +1,63 @@
+title: Static Tundra Group Activity
+id: f897bc86-b652-4a6a-bd8a-2a725a6fca72
+status: experimental
+description: >-
+  Detects a combination of Tactics, Techniques, and Procedures (TTPs) associated with the Russian state-sponsored group Static Tundra.
+  This includes network communications to known C2 IPs, network device configuration changes, and data exfiltration techniques observed on network devices like Cisco routers.
+references:
+  - https://blog.talosintelligence.com/static-tundra/
+author: RW
+date: 2025-08-22
+tags:
+  - attack.initial_access
+  - attack.persistence
+  - attack.defense_evasion
+  - attack.collection
+  - attack.exfiltration
+  - attack.t1190
+  - attack.t1078
+  - attack.t1098.002
+  - attack.t1562.007
+  - attack.t1020
+  - attack.t1048
+  - threat_group.static_tundra
+logsource:
+  product: cisco_ios
+  category: firewall
+  # Note: This rule combines indicators from network traffic (firewall, netflow) and device command logs (syslog).
+  # It is intended to be run against logs from network devices like Cisco routers, but network IOCs may appear in other log sources.
+detection:
+  # IOC Search: Known Static Tundra C2 IPs in network traffic
+  ioc_dst:
+    destination.ip:
+      - '185.141.24.222'
+      - '185.82.202.34'
+      - '185.141.24.28'
+      - '185.82.200.181'
+  ioc_src:
+    source.ip:
+      - '185.141.24.222'
+      - '185.82.202.34'
+      - '185.141.24.28'
+      - '185.82.200.181'
+  # Network TTPs: Inbound TFTP for config exfil or GRE tunnels for traffic collection
+  net_tftp:
+    destination.port: 69
+    network.transport: 'udp'
+  net_gre:
+    network.protocol_name: 'gre' # Protocol number 47
+  # Command Line TTPs: Specific Cisco commands for persistence and exfiltration
+  cmd_config_exfil:
+    command|contains:
+      - 'tftp-server nvram:startup-config' # Enables local TFTP server for config exfil
+      - 'redirect tftp://' # Config exfil via TFTP redirect
+      - 'copy running-config ftp://' # Config exfil via FTP
+  cmd_config_modify:
+    command|startswith:
+      - 'access-list ' # ACL modification
+      - 'tacacs-server ' # TACACS+ config modification
+  condition: 1 of ioc_* or 1 of net_* or 1 of cmd_*
+falsepositives:
+  - Legitimate administrative activity may use TFTP or GRE tunnels. It is recommended to baseline normal activity and focus on traffic to/from network infrastructure zones.
+  - Access-list (ACL) and TACACS+ configuration changes can be legitimate. Correlate these events with change management records or authorized administrator activity.
+level: high

@@ -1,0 +1,64 @@
+title: SHELLTER Evasion Framework Activity
+id: 129ad44a-faf6-4b64-a793-e1635005d549
+status: experimental
+description: >-
+  This rule detects indicators and behaviors associated with the SHELLTER evasion framework.
+  It identifies known malicious file hashes, C2 network communications, and TTPs like remapping ntdll.dll to bypass API hooks and suspicious module preloading.
+references:
+  - https://www.elastic.co/security-labs/taking-shellter
+author: RW
+date: 2025-08-23
+tags:
+  - attack.defense_evasion
+  - attack.command_and_control
+  - attack.t1055
+  - attack.t1574.002
+  - attack.t1071
+detection:
+  # Part 1: Detect known malicious file hashes (e.g., Sysmon Event ID 1)
+  selection_hash:
+    logsource:
+      category: process_creation
+      product: windows
+    Hashes|contains:
+      - 'SHA256=c865f24e4b9b0855b8b559fc3769239b0aa6e8d680406616a13d9a36fbbc2d30'
+      - 'SHA256=7d0c9855167e7c19a67f800892e974c4387e1004b40efb25a2a1d25a99b03a10'
+      - 'SHA256=b3e93bfef12678294d9944e61d90ca4aa03b7e3dae5e909c3b2166f122a14dad'
+      - 'SHA256=da59d67ced88beae618b9d6c805f40385d0301d412b787e9f9c9559d00d2c880'
+      - 'SHA256=70ec2e65f77a940fd0b2b5c0a78a83646dec17583611741521e0992c1bf974f1'
+      - 'SHA256=263ab8c9ec821ae573979ef2d5ad98cda5009a39e17398cd31b0fad98d862892'
+  # Part 2: Detect known C2 network indicators (e.g., Sysmon Event ID 3)
+  selection_net_ip:
+    logsource:
+      category: network_connection
+      product: windows
+    DestinationIp:
+      - '185.156.72.80'
+      - '94.141.12.182'
+  selection_net_domain:
+    logsource:
+      category: network_connection
+      product: windows
+    DestinationHostname:
+      - 'eaglekl.digital'
+  # Part 3: Detect ntdll.dll unhooking via process access (e.g., Sysmon Event ID 10)
+  selection_unhook:
+    logsource:
+      category: process_access
+      product: windows
+    TargetImage|endswith: '\ntdll.dll'
+  # Part 4: Detect suspicious preloading of modules (e.g., Sysmon Event ID 7)
+  selection_preload:
+    logsource:
+      category: image_load
+      product: windows
+    ImageLoaded|endswith:
+      - '\wininet.dll'
+      - '\crypt32.dll'
+      - '\advapi32.dll'
+      - '\urlmon.dll'
+  condition: selection_hash or (1 of selection_net_*) or selection_unhook or (selection_preload | count(distinct ImageLoaded) by ProcessGuid >= 3)
+falsepositives:
+  - The NTDLL remapping detection (`selection_unhook`) can be triggered by legitimate security products, debuggers, or software packers. It is recommended to exclude known good processes if this is noisy in your environment.
+  - The suspicious module preloading detection (`selection_preload`) can be triggered by legitimate applications, especially web browsers. Consider excluding common processes like 'chrome.exe', 'msedge.exe', or 'explorer.exe' to improve fidelity.
+level: medium

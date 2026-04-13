@@ -1,0 +1,155 @@
+title: Water Curse Actor Activity
+id: c03bbd4c-ff4d-4075-981e-50649a1a22aa
+status: experimental
+description: >-
+  Detects multiple Tactics, Techniques, and Procedures (TTPs) associated with the Water Curse threat actor.
+  Water Curse leverages compromised GitHub repositories to distribute multi-stage malware, targeting developers, cybersecurity professionals, and gamers.
+  This rule detects various stages of the attack chain, from initial execution to defense evasion, persistence, and C2 communication.
+references:
+  - https://www.trendmicro.com/en_us/research/25/f/water-curse.html
+author: RW
+date: 2025-08-23
+tags:
+  - attack.supply_chain
+  - attack.t1195.002
+  - attack.execution
+  - attack.t1129
+  - attack.defense_evasion
+  - attack.t1562.001
+  - attack.privilege_escalation
+  - attack.t1548.002
+  - attack.persistence
+  - attack.t1053.005
+  - attack.collection
+  - attack.t1560
+  - attack.command_and_control
+  - attack.t1071
+  - threat_actor.water_curse
+logsource:
+  product: windows
+  service:
+    - security
+    - sysmon
+    - powershell
+detection:
+  # TTP 1: Initial execution via malicious Visual Studio project file (.csproj)
+  selection_initial_exec:
+    logsource:
+      category: process_creation
+    ParentImage|endswith: '\MSBuild.exe'
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - '.exec.cmd'
+      - '\Temp\MSBuildTemp\'
+
+  # TTP 2: Defense Evasion via PowerShell
+  selection_defense_evasion_psh_defender:
+    logsource:
+      category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'Set-MpPreference'
+      - '-ExclusionPath'
+      - 'C:\'
+  selection_defense_evasion_psh_vss:
+    logsource:
+      category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'vssadmin'
+      - 'delete'
+      - 'shadows'
+      - '/all'
+  selection_defense_evasion_psh_restore:
+    logsource:
+      category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'Set-ItemProperty'
+      - 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore'
+      - 'DisableSR'
+
+  # TTP 3: UAC Bypass via ms-settings protocol handler hijack
+  selection_uac_bypass:
+    logsource:
+      category: registry_set
+    TargetObject|contains: '\Software\Classes\ms-settings\shell\open\command'
+    TargetObject|endswith:
+      - '\(Default)'
+      - '\DelegateExecute'
+
+  # TTP 4: Persistence via unusually configured Scheduled Task
+  selection_persistence_schtasks_duration:
+    logsource:
+      category: process_creation
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - '/du 9999:59'
+  selection_persistence_schtasks_bitlocker:
+    logsource:
+      category: process_creation
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - '/tn "BitLocker Encrypt All Drives"'
+      - '\OneDriveCloud\taskhostw.exe'
+
+  # TTP 5: Data Staging and Reconnaissance
+  selection_staging_7z:
+    logsource:
+      category: process_creation
+    Image: 'C:\ProgramData\sevenZip\7z.exe'
+    CommandLine|contains: '-p'
+  selection_recon_nvidia:
+    logsource:
+      category: process_creation
+    ParentImage|endswith: '\NVIDIA Control Panel.exe'
+    ParentImage|contains: '\Microsoft\Vault\UserRoamingTiles\NVIDIAContainer\'
+    Image|endswith:
+      - '\curl.exe'
+      - '\wmic.exe'
+      - '\tasklist.exe'
+
+  # TTP 6: Malicious File Artifacts Creation
+  selection_file_artifacts_vs_script:
+    logsource:
+      category: file_creation
+    TargetFilename|contains: '\.vs-script\'
+    TargetFilename|endswith:
+      - '\antiDebug.ps1'
+      - '\disabledefender.ps1'
+  selection_file_artifacts_temp:
+    logsource:
+      category: file_creation
+    TargetFilename|contains: '\AppData\Local\Temp\'
+    TargetFilename|endswith: '\SearchFilter.exe'
+  selection_file_artifacts_nvidia:
+    logsource:
+      category: file_creation
+    TargetFilename|contains: '\Microsoft\Vault\UserRoamingTiles\NVIDIAContainer\'
+    TargetFilename|endswith: '\NVIDIA Control Panel.exe'
+
+  # TTP 7: C2 and Exfiltration Network Activity
+  selection_c2_domains:
+    logsource:
+      category: network_connection
+    DestinationHostname|contains:
+      - 'store-eu-par-2.gofile.io'
+      - 'api.telegram.org'
+      - 'popcorn-soft.glitch.me'
+      - 'pastejustit.com'
+      - 'pastesio.com'
+  selection_c2_ip:
+    logsource:
+      category: network_connection
+    DestinationIp: '46.101.236.176'
+  selection_c2_regasm:
+    logsource:
+      category: network_connection
+    Image|endswith: '\RegAsm.exe'
+
+  condition: 1 of them
+falsepositives:
+  - Legitimate administrative or development activity can trigger some of these detections in isolation. For example, creating scheduled tasks or using 7-Zip from non-standard locations. The strength of this rule comes from the correlation of these distinct behaviors. Tuning may be required in specific environments.
+level: high

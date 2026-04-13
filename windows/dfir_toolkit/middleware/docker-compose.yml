@@ -1,0 +1,12 @@
+---
+services:
+  dfir-middleware:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config.ini:/app/config.ini
+      - /var/log/dfir:/var/log
+    environment:
+      - DFIR_AUTH_TOKEN=${DFIR_AUTH_TOKEN}
+      - DFIR_ACTIVE_SIEM=${DFIR_ACTIVE_SIEM}

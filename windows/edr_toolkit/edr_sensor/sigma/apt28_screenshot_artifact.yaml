@@ -1,0 +1,23 @@
+title: SLIMAGENT Screenshot Artifacts
+id: 3cd7a725-e39c-430e-9f95-9834dc33b505
+status: experimental
+description: Detects the creation of screenshot files by the SLIMAGENT malware, used by APT28. The malware saves screenshots in the %TEMP% directory with a specific naming convention "Desktop_DD-MM-YYYY_HH-MM-SS.svc".
+author: Rob Weber
+date: 2025-07-27
+tags:
+  - attack.collection
+  - attack.t1113
+  - threat_actor.apt28
+  - malware.slimagent
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection:
+    # Detects files created in the temp directory with the specific prefix and extension used by SLIMAGENT.
+    TargetFilename|contains: '\AppData\Local\Temp\Desktop_'
+    TargetFilename|endswith: '.svc'
+  condition: selection
+falsepositives:
+  - The file naming pattern is quite specific. It is possible, but unlikely, that a legitimate application would create '.svc' files with a 'Desktop_' prefix in the user's temporary directory.
+level: medium

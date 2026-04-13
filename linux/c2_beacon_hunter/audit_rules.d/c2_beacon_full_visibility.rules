@@ -1,0 +1,66 @@
+# ================================================================================
+# c2_beacon_hunter FULL VISIBILITY RULES - v2.6
+# Maximum visibility when compromise is suspected
+# Compatible with Ubuntu, RHEL, Fedora, Debian, etc.
+# WARNING: Very high log volume. Use only during active investigation.
+# Copy: sudo cp audit_rules.d/c2_beacon_full_visibility.rules /etc/audit/rules.d/
+# Load with: sudo auditctl -R /etc/audit/rules.d/c2_beacon_full_visibility.rules
+# Reload with: sudo systemctl restart auditd
+# ================================================================================
+
+-D
+
+# === Process Execution + Command Line ===
+-a always,exit -F arch=b64 -S execve,execveat -k process_exec
+-a always,exit -F arch=b32 -S execve,execveat -k process_exec
+
+# === All Network Activity (Inbound + Outbound) ===
+-a always,exit -F arch=b64 -S connect,accept,accept4,bind -k network_all
+-a always,exit -F arch=b32 -S connect,accept,accept4,bind -k network_all
+
+-a always,exit -F arch=b64 -S sendto,sendmsg,sendmmsg -k network_send
+-a always,exit -F arch=b32 -S sendto,sendmsg,sendmmsg -k network_send
+
+-a always,exit -F arch=b64 -S recvfrom,recvmsg,recvmmsg -k network_recv
+-a always,exit -F arch=b32 -S recvfrom,recvmsg,recvmmsg -k network_recv
+
+# === DNS C2 Detection ===
+-a always,exit -F arch=b64 -S sendto,sendmsg,sendmmsg -k dns_traffic
+-a always,exit -F arch=b32 -S sendto,sendmsg,sendmmsg -k dns_traffic
+
+-a always,exit -F arch=b64 -S recvfrom,recvmsg,recvmmsg -k dns_traffic
+-a always,exit -F arch=b32 -S recvfrom,recvmsg,recvmmsg -k dns_traffic
+
+# === Fileless / Memory Execution ===
+-a always,exit -F arch=b64 -S memfd_create -k fileless_exec
+-a always,exit -F arch=b32 -S memfd_create -k fileless_exec
+
+# === Suspicious Temporary Directory Execution ===
+-a always,exit -F arch=b64 -F dir=/tmp -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/tmp -F perm=x -k suspicious_exec
+-a always,exit -F arch=b64 -F dir=/dev/shm -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/dev/shm -F perm=x -k suspicious_exec
+-a always,exit -F arch=b64 -F dir=/run -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/run -F perm=x -k suspicious_exec
+-a always,exit -F arch=b64 -F dir=/var/tmp -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/var/tmp -F perm=x -k suspicious_exec
+
+# === Masquerading & Privilege Changes ===
+-a always,exit -F arch=b64 -S prctl,setuid,setgid -k proc_cred
+-a always,exit -F arch=b32 -S prctl,setuid,setgid -k proc_cred
+
+# === Socket Creation (Raw sockets, custom DNS tools, etc.) ===
+-a always,exit -F arch=b64 -S socket -k socket_create
+-a always,exit -F arch=b32 -S socket -k socket_create
+
+# === File Writes to Sensitive Locations ===
+-a always,exit -F arch=b64 -F dir=/etc -F perm=wa -k sensitive_write
+-a always,exit -F arch=b32 -F dir=/etc -F perm=wa -k sensitive_write
+-a always,exit -F arch=b64 -F dir=/root -F perm=wa -k sensitive_write
+-a always,exit -F arch=b32 -F dir=/root -F perm=wa -k sensitive_write
+-a always,exit -F arch=b64 -F dir=/bin -F perm=wa -k sensitive_write
+-a always,exit -F arch=b32 -F dir=/bin -F perm=wa -k sensitive_write
+
+# =============================================================================
+# End of rules
+# =============================================================================

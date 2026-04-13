@@ -1,0 +1,70 @@
+title: Suspicious Process Spawned by Web Server
+id: f5bea04a-f2aa-47ee-9242-2753361b3399
+status: experimental
+description: >-
+  Detects when a web server process spawns a shell or a common reconnaissance command.
+  This is a strong indicator of a web shell or post-exploitation activity following the compromise of an internet-facing application,
+  a technique frequently used by adversaries like OPERATOR PANDA and GLACIAL PANDA for initial access.
+author: RW
+date: 2025-08-22
+tags:
+  - attack.initial_access
+  - attack.t1190
+  - attack.persistence
+  - attack.t1505.003
+  - threat_actor.operator_panda
+  - threat_actor.glacial_panda
+logsource:
+  category: process_creation
+  product:
+    - linux
+    - windows
+detection:
+  parent_process:
+    # Parent process is a common web server process
+    parent.image|endswith:
+      # Windows
+      - '\w3wp.exe'
+      - '\httpd.exe'
+      - '\nginx.exe'
+      - '\tomcat8.exe'
+      - '\tomcat9.exe'
+      - '\node.exe'
+      # Linux
+      - '/apache2'
+      - '/caddy'
+      - '/httpd'
+      - '/lighttpd'
+      - '/nginx'
+      - '/php-fpm'
+  child_process:
+    # Child process is a shell or reconnaissance tool
+    image|endswith:
+      # Shells
+      - '\sh.exe'
+      - '\bash.exe'
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '/sh'
+      - '/bash'
+      - '/dash'
+      - '/ksh'
+      - '/zsh'
+      # Recon Tools
+      - '\whoami.exe'
+      - '\systeminfo.exe'
+      - '\ipconfig.exe'
+      - '\net.exe'
+      - '\net1.exe'
+      - '/whoami'
+      - '/id'
+      - '/ip'
+      - '/ifconfig'
+      - '/uname'
+      - '/wget'
+      - '/curl'
+  condition: parent_process and child_process
+falsepositives:
+  - Some web applications or administrative scripts may legitimately spawn shell commands. These should be investigated and filtered.
+  - Monitoring plugins that execute scripts via the web server.
+level: high

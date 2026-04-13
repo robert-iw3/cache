@@ -1,0 +1,41 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=ActivityMonitor
+ClassGuid={b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}
+Provider=%ManufacturerName%
+DriverVer=02/07/2026,0.6.0.0
+CatalogFile=endpoint_monitor_driver.cat
+
+[DestinationDirs]
+DefaultDestDir=12
+
+[Manufacturer]
+%ManufacturerName%=Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceName%=DriverInstall,endpoint_monitor_driver
+
+[DriverInstall]
+CopyFiles=DriverCopyFiles
+
+[DriverCopyFiles]
+endpoint_monitor_driver.sys,,,2
+
+[DriverService]
+DisplayName=%ServiceName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\endpoint_monitor_driver.sys
+LoadOrderGroup="FSFilter Activity Monitor"
+AddReg=DriverAddReg
+
+[DriverAddReg]
+HKR, "Instances", "DefaultInstance", 0x00000000, "Endpoint Monitor Instance"
+HKR, "Instances\Endpoint Monitor Instance", "Altitude", 0x00000000, "320000"
+HKR, "Instances\Endpoint Monitor Instance", "Flags", 0x00010001, 0x0
+
+[Strings]
+ManufacturerName="Robert Weber"
+ServiceName="EndpointMonitor"
+DeviceName="Endpoint Monitor Driver"

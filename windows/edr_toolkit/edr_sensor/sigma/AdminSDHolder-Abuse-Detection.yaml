@@ -1,0 +1,28 @@
+title: AdminSDHolder DACL Modification for Persistence
+id: 8dad060d-cd61-43d9-a7ad-6829d7a599f0
+status: experimental
+description: |
+  Detects modifications to the Discretionary Access Control List (DACL) of the AdminSDHolder object in Active Directory.
+  Attackers can modify the permissions on the AdminSDHolder object to grant a compromised account privileges over all protected accounts and groups in the domain (e.g., Domain Admins, Enterprise Admins).
+  The Security Descriptor Propagator (SDProp) process periodically applies the security descriptor from the AdminSDHolder object to all protected objects, making this a powerful persistence mechanism.
+author: RW
+date: 2025-08-22
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1098
+  - attack.t1546.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 5136 # A directory service object was modified.
+    ObjectDN|contains: 'CN=AdminSDHolder,CN=System,' # The modification was on the AdminSDHolder object.
+    LDAPDisplayName: 'nTSecurityDescriptor' # The attribute modified was the security descriptor, which contains the DACL.
+  filter_system:
+    SubjectUserSid: 'S-1-5-18' # Exclude the local SYSTEM account, which is involved in the SDProp process but typically doesn't initiate the change.
+  condition: selection and not filter_system
+falsepositives:
+  - Legitimate, albeit rare, modifications to the AdminSDHolder object by domain administrators for delegation purposes. Any alert from this rule should be treated as highly suspicious and be investigated immediately.
+level: high

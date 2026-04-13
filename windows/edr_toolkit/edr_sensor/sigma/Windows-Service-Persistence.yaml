@@ -1,0 +1,40 @@
+title: Windows Service Creation for Persistence
+id: 55472a04-1e5d-4874-9882-19659eaf834a
+status: experimental
+description: Detects the creation of a new Windows service using common command-line tools like sc.exe or PowerShell. Adversaries, such as Salt Typhoon, may install new services that can be configured to execute at startup to establish persistence.
+references:
+author: RW
+date: 2025-07-31
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1543.003
+  - threat_group.salt_typhoon
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_sc:
+        # Detects service creation using sc.exe
+    Image|endswith: '\sc.exe'
+    CommandLine|contains: 'create'
+  selection_powershell:
+        # Detects service creation using the New-Service PowerShell cmdlet
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+    CommandLine|contains: 'New-Service'
+  filter_legit_parent:
+        # Filters out common legitimate installers and system processes that create services
+    ParentImage|endswith:
+      - '\msiexec.exe'
+      - '\TiWorker.exe'
+      - '\TrustedInstaller.exe'
+      - '\setup.exe'
+      - '\NisSrv.exe'       # Windows Defender
+  condition: (selection_sc or selection_powershell) and not filter_legit_parent
+falsepositives:
+  - Legitimate software installations or updates not covered by the filter may create new services.
+  - Administrative scripts may also create services for legitimate purposes.
+  - To improve fidelity, consider adding conditions to look for services with binary paths (`binPath=`) pointing to unusual locations like C:\Users\, C:\ProgramData\, C:\Windows\Temp\, or network shares.
+level: medium

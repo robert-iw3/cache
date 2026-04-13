@@ -1,0 +1,87 @@
+title: "Pay2Key Ransomware IOC and TTPs - Iranian Cyber Warfare"
+id: e975c066-4fae-4d24-b960-39d047511f69
+status: experimental
+description: Detects Indicators of Compromise (IOCs) and Tactics, Techniques,
+  and Procedures (TTPs) associated with the Pay2Key ransomware campaign as
+  reported by Morphisec in mid-2025. This includes specific file hashes, defense
+  evasion techniques like adding Defender exclusions, sandbox evasion, and
+  specific file artifacts.
+references:
+  - https://www.morphisec.com/blog/pay2key-resurgence-iranian-cyber-warfare/
+author:
+date: 2025-07-12
+tags:
+  - attack.ransomware
+  - attack.impact
+  - attack.t1486
+  - attack.defense_evasion
+  - attack.t1562.001
+  - threat_actor.fox_kitten
+  - malware.pay2key
+  - malware.mimic
+logsource:
+  - category: process_creation
+    product: windows
+  - category: file_event
+    product: windows
+  - category: dns
+    product: windows
+detection:
+  ioc_hashes:
+    # IOC hashes for various Pay2Key components
+    - sha256:
+        - '65BE56F46B2AA6BB64B9E560A083A77A80A1B5A459BCBA8D385AA62F8E7B153F'
+        - 'E237CF378E2848F687A494AB67FAF9E7EC784D00090CD598A9F1E3291C97181F'
+        - '242FA471582C2F37C17717DC260CB108584C44E86B8831382F7B2F5FC63AEB6B'
+        - '7336B865F232F7FCCB9B85524D5EBDC444344DE363F77E1B1C3EAEEB3428E1A5'
+        - '1D0EC8E34703A7589533462BE62C020004CFE0F7B20204F9E6C79B84CBFAFC9B'
+        - 'D61A55D368A1DCF570F633C7A23AE12361749C2D7000178DD9E353528C325907'
+        - '17FC4DF8EF9A92C972684CBA707C3976B91BCD7F0251F42F1B63E4DE0E688D6C'
+        - 'B64305852DDB317B7839B39DB602FCDDA60E7658F391FF4BA52FCE4DBCA89089'
+        - '188C215FA32A445D7FFA90DC51C58BDDCD62A714A8F6EAC89B92574C349BF901'
+        - 'F947771556E0A0D900B21DE6A37ABD04C1D2E0E84D0062F61C49D792FFEDEEC5'
+        - '791BB67FE91E9BD129607A94714E9E79AFE304271D839B369AAB8813D2DA4AC1'
+        - '6F0B01CEB4E2CFBDFE8B92729F18EB7F4953BF9859085DC3AC81983274065D6C'
+        - '1C70D4280835F18654422CEC1B209EEC856F90344B8F02AFCA82716555346A55'
+        - 'A8BFA1389C49836264CFA31FC4410B88897A78D9C2152729D28ECA8C12171B9E'
+        - '1C3F2530B2764754045039066D2C277DFF4EFABD4F15F2944E30B10E82F443C0'
+        - 'BD4635D582413F84AC83ADBB4B449B18BAC4FC87CA000D0C7BE84AD0F9CAF68E'
+        - 'FB653FD840B0399CEA31986B49B5CEADD28FB739DD2403A8BB05051EEA5E5BBC'
+        - '2FEFB69E4B2310BE5E09D329E8CF1BEBD1F9E18884C8C2A38AF8D7EA46BD5E01'
+        - '89AD2164717BD5F5F93FBB4CEBF0EFEB473097408FDDFC7FC7B924D790514DC5'
+        - '3BA64D08EDBFADEC8E301673DF8B36F9F7475C83587930FC9577EA366EC06839'
+        - '39D3BA87A27EAE69A01666B0ECBB8C60259BE4B3DECF4CDD1D950C98C6C0B08C'
+        - '60EC008C8515934C3C8D89F84BBCC8FAC9144E642C0143D8230F465F4E66F62C'
+        - 'A05C18E81911608CF2EDB19907092D542548ABB695E48E3217DFBEC2F3DFCD04'
+        - 'D8E423C8644B686AD3376F38F3E4DF55A152EE4CAC2AF3079651263F002D8C26'
+        - '9C06EA83553C6DAB3D831E1046CEE237A9C1B1ED79B3B2E37ED9F3C8A38643EB'
+  ioc_c2:
+    category: dns
+    query: 'gos-usa.xyz' # C2 domain used by operators
+  ioa_defender_exclusion:
+    category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'Add-MpPreference'
+      - '-Force'
+      - '-ExclusionExtension'
+      - '.exe'
+  ioa_sandbox_evasion:
+    category: process_creation
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - 'reg query'
+      - 'HKEY_USERS\S-1-5-19' # Checks for LOCAL SERVICE account to evade sandboxes
+      - '||'
+      - 'exit'
+  ioa_file_drop:
+    category: file_event
+    TargetFilename|endswith:
+      - '\enc-build.exe' # Mimic ransomware component
+      - '\Avast Software\Avast\powrprof.exe' # Masqueraded NoDefender tool dropped in an anomalous location
+  condition: 1 of them
+falsepositives:
+  # The 'Add-MpPreference' command could be used legitimately by administrators, however, excluding all '.exe' files is highly suspicious and warrants investigation.
+  # The sandbox evasion technique might be used by other malware or legitimate software for environment checks.
+  # The file 'powrprof.exe' is a legitimate Windows binary; this rule is scoped to its creation in an anomalous path associated with this threat actor.
+level: high

@@ -1,0 +1,25 @@
+# /etc/apparmor.d/usr.bin.wget
+#include <tunables/global>
+
+profile wget /usr/bin/wget {
+  #include <abstractions/base>
+
+  network inet,
+  network inet6,
+
+  /usr/lib/** r,
+  /etc/** r,
+
+  # Deny dangerous execution
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/python* x,
+  deny /usr/bin/curl x,
+  deny /usr/bin/socat x,
+  deny /usr/bin/nc x,
+
+  owner @{HOME}/** rw,
+  owner /tmp/** rw,
+
+  audit deny /** w,
+}

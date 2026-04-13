@@ -1,0 +1,42 @@
+title: Cobalt Strike PowerShell Loader Functions and Methods
+id: 8f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8
+status: experimental
+description: Detects PowerShell script blocks containing function definitions or
+  .NET method calls commonly used by Cobalt Strike PowerShell loaders for
+  dynamic API resolution, memory allocation, and shellcode execution. This rule
+  is based on analysis from the provided reference.
+author:
+date: 2025-06-19
+references:
+  - https://hunt.io/blog/cobaltstrike-powershell-loader-chinese-russian-infrastructure
+logsource:
+  product: windows
+  service: powershell
+  category: ps_script # Corresponds to Event ID 4104 (Script Block Logging)
+detection:
+  selection_functions:
+    ScriptBlockText|contains:
+      - 'function func_get_proc_address'
+      - 'function func_get_delegate_type'
+  selection_methods:
+    ScriptBlockText|contains:
+      - 'System.Runtime.InteropServices.Marshal::GetDelegateForFunctionPointer'
+      - 'System.Runtime.InteropServices.Marshal::Copy'
+      - 'System.Convert::FromBase64String'
+  condition: 1 of selection_*
+fields:
+  - ComputerName
+  - User
+  - ScriptBlockText
+  - EventID
+tags:
+  - attack.execution
+  - attack.t1059.001 # PowerShell
+  - attack.defense_evasion
+  - attack.t1027 # Obfuscated Files or Information
+  - attack.t1055 # Process Injection (via shellcode execution)
+  - cobaltstrike
+falsepositives:
+  - Legitimate use of these specific function names or .NET methods in custom
+    PowerShell scripts (rare but possible).
+level: high

@@ -1,0 +1,14 @@
+[general]
+mode = agent
+output_dir = /app/output
+
+[ebpf]
+enabled = true
+capture_loopback = false
+
+[central]
+url = https://YOUR_CENTRAL_IP:8443/api/v1/ingest/events
+ca_cert = /app/certs/ca.crt
+agent_id = endpoint-$(hostname)
+# Add expected SHA256 hash for pinning (replace with actual)
+ca_cert_hash = REPLACE_WITH_SHA256_HASH_OF_CA_CERT

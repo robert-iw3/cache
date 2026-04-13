@@ -1,0 +1,28 @@
+title: Laundry Bear AitM Phishing Framework Activity
+id: 8992ac00-cea8-4704-b0d4-8485b5ca566a
+status: experimental
+description: Detects specific HTML response bodies containing JavaScript redirects to Microsoft login pages.
+  This behavior is indicative of Adversary-in-the-Middle (AitM) phishing frameworks, such as Evilginx, used
+  by the Laundry Bear (Void Blizzard) APT group to steal credentials and session cookies.
+author: RW
+date: 2025-07-28
+tags:
+  - apt.laundry_bear
+  - apt.void_blizzard
+  - attack.initial_access
+  - attack.t1566.002
+logsource:
+  category: proxy
+detection:
+  # This selection looks for a specific JavaScript redirect to outlook.live.com
+  selection_outlook:
+    response_body: "<html><head><meta name='referrer' content='no-referrer'><script>top.location.href='https://outlook.live.com';</script></head><body></body></html>"
+  # This selection looks for a specific JavaScript redirect to login.live.com
+  selection_login:
+    response_body: "<html><head><meta name='referrer' content='no-referrer'><script>top.location.href='https://login.live.com';</script></head><body></body></html>"
+  condition: 1 of selection_*
+falsepositives:
+  # These HTML bodies are highly specific to known phishing kits.
+  # It is possible that other threat actors or red teams use the same redirect code.
+  - Unrelated phishing campaigns using the same or similar HTML redirect code.
+level: high

@@ -1,0 +1,25 @@
+# /etc/apparmor.d/usr.bin.python3.12
+#include <tunables/global>
+
+profile python3.12 /usr/bin/python3.12 {
+  #include <abstractions/base>
+
+  # Allow network but limit
+  network inet,
+  network inet6,
+
+  # Allow reading libraries
+  /usr/lib/** r,
+  /usr/share/** r,
+
+  # Restrict execution of dangerous commands
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+
+  # Allow writing only in user home
+  owner @{HOME}/** rw,
+
+  audit deny /** w,
+}

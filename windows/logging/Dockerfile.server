@@ -1,0 +1,11 @@
+### Dockerfile.server ###
+FROM python:3.11-slim
+
+RUN pip install requests aiohttp
+
+COPY server_parser.py /app/server_parser.py
+COPY schema.json /app/schema.json
+
+WORKDIR /app
+
+CMD ["python", "server_parser.py"]

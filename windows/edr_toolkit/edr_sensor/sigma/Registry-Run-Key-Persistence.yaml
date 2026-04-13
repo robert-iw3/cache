@@ -1,0 +1,43 @@
+title: Registry Run Key Persistence
+id: e04f9f81-3ce3-4aa8-8bbd-b28532ff2f20
+status: experimental
+description: Detects modification of registry run keys to establish persistence. This technique is commonly used by adversaries, including Salt Typhoon, to ensure their malware executes on system startup.
+references:
+author: RW
+date: 2025-07-31
+tags:
+  - attack.persistence
+  - attack.t1547.001
+  - threat_group.salt_typhoon
+logsource:
+  category: registry_set
+  product: windows
+detection:
+  selection:
+        # Detects modification of common registry run keys
+    TargetObject|endswith:
+      - '\Microsoft\Windows\CurrentVersion\Run'
+      - '\Microsoft\Windows\CurrentVersion\RunOnce'
+      - '\Microsoft\Windows\CurrentVersion\RunServices'
+      - '\Microsoft\Windows\CurrentVersion\RunServicesOnce'
+      - '\Wow6432Node\Microsoft\Windows\CurrentVersion\Run'
+      - '\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce'
+      - '\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run'
+  filter_legit_procs:
+        # This is a placeholder for filtering legitimate processes that are known to modify run keys.
+        # This list should be customized to your environment.
+    Image|endswith:
+      - '\msiexec.exe'
+      - '\setup.exe'
+      - '\install.exe'
+      - '\update.exe'
+      - '\updater.exe'
+      - '\GoogleUpdate.exe'
+      - '\OneDriveSetup.exe'
+      - '\Teams.exe'
+  condition: selection and not filter_legit_procs
+falsepositives:
+  - Legitimate software installers and updaters frequently modify these keys to configure startup behavior.
+  - System administrators may use scripts or Group Policy to configure startup items.
+  - The provided filter is a starting point; it should be tuned to your environment by adding other legitimate software that modifies these keys.
+level: medium

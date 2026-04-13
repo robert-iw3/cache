@@ -1,0 +1,39 @@
+---
+services:
+  c2-beacon-hunter:
+    build:
+      context: .
+      dockerfile: ebpf.Dockerfile
+    image: c2-beacon-hunter:v2.7
+    container_name: c2-beacon-hunter
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    network_mode: "host"
+    pid: "host"
+    volumes:
+      # --- 1. eBPF & Kernel Core Mounts ---
+      # Allows eBPF to attach to kernel hooks (kprobes/tracepoints) via the debug filesystem.
+      - /sys/kernel/debug:/sys/kernel/debug:rw
+      # The BPF virtual filesystem; allows pinning and sharing eBPF maps between kernel and user-space.
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+      # BTF (BPF Type Format) definitions required for CO-RE (Compile Once - Run Everywhere).
+      # Tells the pre-compiled probe how to map memory on this specific host kernel.
+      - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
+      # --- 2. Application Persistence Mounts ---
+      # Saves threat logs (anomalies.jsonl, detections.log) to the host machine.
+      - ./output:/app/output:rw
+      # Persists the SQLite database and Machine Learning baseline models across container reboots.
+      - ./data:/app/data:rw
+      # --- 3. BCC Fallback Mounts (On-the-fly compilation) ---
+      # Provides host kernel headers to the container so the BCC collector can compile eBPF C code dynamically.
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      # --- 4. Host Context Mapping ---
+      # Mounts the host's process tree so `psutil` can see all host processes, not just isolated container processes.
+      - /proc:/host/proc:ro
+    environment:
+      - TEST_MODE=true
+    command: /app/venv/bin/python ebpf/run_full_stack.py

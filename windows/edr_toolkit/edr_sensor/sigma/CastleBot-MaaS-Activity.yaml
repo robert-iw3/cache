@@ -1,0 +1,95 @@
+title: CastleBot Malware-as-a-Service Activity
+id: 1d9d733e-118b-4140-9e9d-4ec81d7d8bf8
+status: experimental
+description: >-
+  Detects various indicators and behaviors associated with the CastleBot MaaS framework, including C2 communication, known file hashes, and persistence techniques.
+references:
+  - https://www.ibm.com/think/x-force/dissecting-castlebot-maas-operation
+author: RW
+date: 2025-08-22
+tags:
+  - attack.execution
+  - attack.persistence
+  - attack.command_and_control
+  - attack.t1059
+  - attack.t1218
+  - attack.t1071.001
+  - attack.t1543.003
+  - malware.castlebot
+  - malware.warmcookie
+  - malware.netsupport
+  - malware.rhadamanthys
+  - malware.remcos
+  - malware.deerstealer
+  - malware.hijackloader
+  - malware.monsterv2
+logsource:
+    # This rule combines endpoint and network indicators. It is best applied on EDR data sources that contain process, file, and network event information.
+    # You may need to split this rule into multiple rules depending on your data sources.
+  product: windows
+  category: process_creation
+detection:
+    # IOCs - File Hashes
+  selection_hashes:
+    sha256:
+            # CastleBot Core
+      - '202f6b6631ade2c41e4762e5877ce0063a3beabce0c3f8564b6499a1164c1e04'
+      - 'b45cce4ede6ffb7b6f28f75a0cbb60e65592840d98dcb63155b9fa0324a88be2'
+            # CastleBot Stager
+      - 'd6eea6cf20a744f3394fb0c1a30431f1ef79d6992b552622ad17d86490b7aa7b'
+      - 'cbaf513e7fd4322b14adcc34b34d793d79076ad310925981548e8d3cff886527'
+      - '8bf93cef46fda2bdb9d2a426fbcd35ffedea9ed9bd97bf78cc51282bd1fb2095'
+      - '53dddae886017fbfbb43ef236996b9a4d9fb670833dfa0c3eac982815dc8d2a5'
+            # Loaders / Scripts
+      - 'a2898897d3ada2990e523b61f3efaacf6f67af1a52e0996d3f9651b41a1c59c9'
+      - '8b2ebeff16a20cfcf794e8f314c37795261619d96d602c8ee13bc6255e951a43'
+      - '05ecf871c7382b0c74e5bac267bb5d12446f52368bb1bfe5d2a4200d0f43c1d8'
+      - 'bf21161c808ae74bf08e8d7f83334ba926ffa0bab96ccac42dde418270387890'
+      - 'e6aab1b6a150ee3cbc721ac2575c57309f307f69cd1b478d494c25cde0baaf85'
+            # Payloads
+      - '2a2cd6377ad69a298af55f29359d67e4586ec16e6c02c1b8ad27c38471145569'        # NetSupport
+      - '5bca7f1942e07e8c12ecd9c802ecdb96570dfaaa1f44a6753ebb9ffda0604cb4'        # WarmCookie
+      - '03122e46a3e48141553e7567c659642b1938b2d3641432f916375c163df819c1'        # Rhadamanthys
+      - '12de997634859d1f93273e552dec855bfae440dcf11159ada19ca0ae13d53dff'        # Remcos
+      - 'c8f95f436c1f618a8ef5c490555c6a1380d018f44e1644837f19cb71f6584a8a'        # DeerStealer
+      - '4834bc71fc5d3729ad5280e44a13e9627e3a82fd4db1bb992fa8ae52602825c6'        # HijackLoader/SecTopRAT
+      - 'ab725f5ab19eec691b66c37c715abd0e9ab44556708094a911b84987d700aa62'        # MonsterV2
+
+    # IOCs - Network Indicators
+  selection_network:
+    - DestinationIp:
+        - '173.44.141.89'
+        - '80.77.23.48'
+        - '62.60.226.73'
+        - '107.158.128.45'
+        - '170.130.165.112'
+        - '107.158.128.105'
+    - DestinationHostname|endswith:
+        - 'mhousecreative.com'
+        - 'google.herionhelpline.com'
+    - Url|contains:
+        - '/service/'
+        - '/c91252f9ab114f26.php'
+
+    # TTP - Suspicious User-Agent to C2
+  selection_ua:
+    UserAgent: 'Googlebot'
+    DestinationIp:
+      - '173.44.141.89'
+      - '80.77.23.48'
+      - '62.60.226.73'
+      - '107.158.128.45'
+
+    # TTP - Persistence via Scheduled Task
+  selection_persistence:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - '/sc'
+      - 'onlogon'
+
+  condition: 1 of them
+falsepositives:
+  - The persistence detection logic may trigger on legitimate administrative activity creating scheduled tasks that run on logon. Further tuning by excluding known legitimate task names or parent processes may be required.
+  - The 'Googlebot' User-Agent may be seen in legitimate traffic, but it is highly suspicious when originating from a standard user endpoint and connecting to the specified IP addresses.
+level: high

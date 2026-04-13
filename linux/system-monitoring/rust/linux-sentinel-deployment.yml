@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: linux-sentinel
+  namespace: security
+  labels:
+    app: linux-sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: linux-sentinel
+  template:
+    metadata:
+      labels:
+        app: linux-sentinel
+    spec:
+      containers:
+      - name: linux-sentinel
+        image: linux-sentinel:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/opt/linux-sentinel/linux-sentinel"]
+        args: ["enhanced"]
+        securityContext:
+          runAsUser: 65534 # nobody
+          runAsGroup: 65534 # nogroup
+          capabilities:
+            add:
+            - NET_ADMIN
+            - DAC_READ_SEARCH
+            - SYS_PTRACE
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 8080
+          name: api
+        env:
+        - name: DASHBOARD_PORT
+          value: "8080"
+        resources:
+          limits:
+            cpu: "400m" # Reduced from 500m
+            memory: "384Mi" # Reduced from 512Mi
+          requests:
+            cpu: "150m" # Reduced from 200m
+            memory: "192Mi" # Reduced from 256Mi
+        volumeMounts:
+        - name: log-volume
+          mountPath: /var/log/linux-sentinel
+        - name: backup-volume
+          mountPath: /var/backups/linux-sentinel
+        livenessProbe:
+          httpGet:
+            path: /api/status
+            port: api
+          initialDelaySeconds: 10
+          periodSeconds: 20 # Reduced frequency
+          timeoutSeconds: 2
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/status
+            port: api
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+      volumes:
+      - name: log-volume
+        emptyDir: {}
+      - name: backup-volume
+        emptyDir: {}
+      securityContext:
+        fsGroup: 65534
+      nodeSelector:
+        kubernetes.io/os: linux

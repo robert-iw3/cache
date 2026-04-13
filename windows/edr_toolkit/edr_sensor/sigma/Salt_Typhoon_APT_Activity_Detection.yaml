@@ -1,0 +1,249 @@
+title: Composite Detection for Salt Typhoon APT
+id: 3ff3598b-52ae-4898-b707-24ee930eee4d
+status: experimental
+description: >-
+  Detects multiple Tactics, Techniques, and Procedures (TTPs) and Indicators of Compromise (IOCs) associated with the Salt Typhoon APT group.
+  This is a broad, composite rule intended to provide wide coverage. For production environments, it is recommended to split these detections into individual, more targeted rules for better performance and tuning.
+references:
+  - https://dti.domaintools.com/inside-salt-typhoon-chinas-state-corporate-advanced-persistent-threat/
+author: RW
+date: 2025-09-27
+tags:
+  - attack.initial_access
+  - attack.execution
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.credential_access
+  - attack.discovery
+  - attack.lateral_movement
+  - attack.collection
+  - attack.exfiltration
+  - attack.command_and_control
+  - attack.t1190
+  - attack.t1078
+  - attack.t1059
+  - attack.t1547
+  - attack.t1098
+  - attack.t1027
+  - attack.t1014
+  - attack.t1021
+  - attack.t1602
+  - attack.t1041
+  - attack.t1567
+  - apt.salt_typhoon
+logsource:
+  category: any
+detection:
+  # IOCs
+  selection_ioc_net:
+    # Network IOCs for C2 and infrastructure
+    logsource:
+      category: network_traffic
+    destination:
+      ip:
+        - '162.251.82.125'
+        - '162.251.82.252'
+        - '172.64.53.3'
+      domain:
+        - 'irdns.mars.orderbox-dns.com'
+        - 'ns4.1domainregistry.com'
+        - 'ns1.value-domain.com'
+        - 'earth.monovm.com'
+        - 'mars.monovm.com'
+        - 'aria-hidden.com'
+        - 'asparticrooftop.com'
+        - 'availabilitydesired.us'
+        - 'caret-right.com'
+        - 'chekoodver.com'
+        - 'clubworkmistake.com'
+        - 'col-lg.com'
+        - 'dateupdata.com'
+        - 'e-forwardviewupdata.com'
+        - 'fessionalwork.com'
+        - 'fitbookcatwer.com'
+        - 'fjtest-block.com'
+        - 'gandhibludtric.com'
+        - 'gesturefavour.com'
+        - 'getdbecausehub.com'
+        - 'hateupopred.com'
+        - 'incisivelyfut.com'
+        - 'lookpumrron.com'
+        - 'materialplies.com'
+        - 'onlineeylity.com'
+        - 'redbludfootvr.com'
+        - 'requiredvalue.com'
+        - 'ressicepro.com'
+        - 'shalaordereport.com'
+        - 'siderheycook.com'
+        - 'sinceretehope.com'
+        - 'solveblemten.com'
+        - 'togetheroffway.com'
+        - 'toodblackrun.com'
+        - 'troublendsef.com'
+        - 'verfiedoccurr.com'
+        - 'waystrkeprosh.com'
+        - 'xdmgwctese.com'
+  selection_ioc_dns:
+    # DNS queries for known C2 domains
+    logsource:
+      category: dns
+    dns:
+      question:
+        name:
+          - 'irdns.mars.orderbox-dns.com'
+          - 'ns4.1domainregistry.com'
+          - 'ns1.value-domain.com'
+          - 'earth.monovm.com'
+          - 'mars.monovm.com'
+          - 'aria-hidden.com'
+          - 'asparticrooftop.com'
+          - 'availabilitydesired.us'
+          - 'caret-right.com'
+          - 'chekoodver.com'
+          - 'clubworkmistake.com'
+          - 'col-lg.com'
+          - 'dateupdata.com'
+          - 'e-forwardviewupdata.com'
+          - 'fessionalwork.com'
+          - 'fitbookcatwer.com'
+          - 'fjtest-block.com'
+          - 'gandhibludtric.com'
+          - 'gesturefavour.com'
+          - 'getdbecausehub.com'
+          - 'hateupopred.com'
+          - 'incisivelyfut.com'
+          - 'lookpumrron.com'
+          - 'materialplies.com'
+          - 'onlineeylity.com'
+          - 'redbludfootvr.com'
+          - 'requiredvalue.com'
+          - 'ressicepro.com'
+          - 'shalaordereport.com'
+          - 'siderheycook.com'
+          - 'sinceretehope.com'
+          - 'solveblemten.com'
+          - 'togetheroffway.com'
+          - 'toodblackrun.com'
+          - 'troublendsef.com'
+          - 'verfiedoccurr.com'
+          - 'waystrkeprosh.com'
+          - 'xdmgwctese.com'
+  selection_ioc_malware:
+    # Detections for malware families associated with Salt Typhoon
+    logsource:
+      category: antivirus
+    threat:
+      name:
+        - 'Demodex'
+        - 'SigRouter'
+        - 'GhostSpider'
+        - 'SnappyBee'
+        - 'Masol RAT'
+        - 'China Chopper'
+  selection_ioc_hash:
+    # Known hash for China Chopper webshell
+    logsource:
+      category: file_creation
+    file:
+      hash:
+        md5: 'e99a18c428cb38d5f260853678922e03'
+  selection_cve:
+    # Exploitation of vulnerabilities used by Salt Typhoon
+    logsource:
+      category: ids
+    signature|contains:
+      - 'CVE-2023-20198'
+      - 'CVE-2023-35082'
+      - 'CVE-2024-21887'
+      - 'CVE-2024-3400'
+      - 'CVE-2018-0171'
+
+  # TTPs
+  selection_ttp_ps_downgrade:
+    # PowerShell downgrade attack to bypass modern security controls
+    logsource:
+      category: process_creation
+      product: windows
+    process:
+      name|endswith: '\powershell.exe'
+      command_line|contains|all:
+        - '-Version'
+        - '2'
+      command_line|contains:
+        - '-enc'
+        - '-command'
+  selection_ttp_amsi_bypass:
+    # PowerShell commands used for defense evasion, such as AMSI bypass or disabling Defender
+    logsource:
+      category: process_creation
+      product: windows
+    process:
+      command_line|contains:
+        - '[System.Management.Automation.AMSIUtils]'
+        - 'Set-MpPreference -DisableRealtimeMonitoring'
+  selection_ttp_cred_dump:
+    # Credential dumping using comsvcs.dll
+    logsource:
+      category: process_creation
+      product: windows
+    process:
+      name|endswith: '\rundll32.exe'
+      command_line|contains|all:
+        - 'comsvcs.dll'
+        - 'MiniDump'
+  selection_ttp_linux_user:
+    # Suspicious user management on Linux for persistence
+    logsource:
+      category: process_creation
+      product: linux
+    process:
+      path|endswith:
+        - '/useradd'
+        - '/adduser'
+        - '/usermod'
+        - '/passwd'
+  selection_ttp_ssh_key:
+    # Modification of SSH authorized_keys for persistence
+    logsource:
+      category: file_creation
+      product: linux
+    file:
+      path|endswith: '/.ssh/authorized_keys'
+  selection_ttp_exfil:
+    # Potential exfiltration to public cloud/file sharing services from suspicious processes
+    logsource:
+      category: network_traffic
+    destination:
+      domain|endswith:
+        - 'github.com'
+        - 'gmail.com'
+        - 'anonfiles.com'
+        - 'file.io'
+    source:
+      process:
+        name|endswith:
+          - '\powershell.exe'
+          - '\cmd.exe'
+          - '\rundll32.exe'
+  selection_ttp_webshell:
+    # Common web servers spawning shell processes, indicative of a webshell like China Chopper
+    logsource:
+      category: process_creation
+      product: windows
+    parent_process:
+      name|endswith:
+        - '\w3wp.exe'
+        - '\httpd.exe'
+        - '\nginx.exe'
+        - '\tomcat.exe'
+    process:
+      name|endswith:
+        - '\cmd.exe'
+        - '\powershell.exe'
+  condition: 1 of them
+falsepositives: >-
+  This is a very broad composite rule. Some selections are high-fidelity (e.g., IOCs), while others may generate false positives in active administrative environments.
+  Specifically, 'selection_ttp_linux_user', 'selection_ttp_exfil', and 'selection_ttp_webshell' may require tuning.
+  It is recommended to split this rule into smaller, more focused detections for production use.
+level: high

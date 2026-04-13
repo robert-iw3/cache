@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C2 Hunter | NEURAL LINK</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+    <style>
+        /* Cyberpunk Customizations */
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&display=swap');
+        body { font-family: 'Fira Code', monospace; background-color: #050505; color: #e2e8f0; }
+        .neon-border-cyan { box-shadow: 0 0 10px rgba(6, 182, 212, 0.5); border: 1px solid #06b6d4; }
+        .neon-border-pink { box-shadow: 0 0 15px rgba(236, 72, 153, 0.4); border: 1px solid #ec4899; }
+        .neon-text-cyan { text-shadow: 0 0 5px rgba(6, 182, 212, 0.8); }
+        .neon-text-pink { text-shadow: 0 0 5px rgba(236, 72, 153, 0.8); }
+        .grid-bg {
+            background-image: linear-gradient(rgba(6, 182, 212, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(6, 182, 212, 0.05) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+        /* Modal Styles */
+        .modal { display: none; position: fixed; z-index: 50; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); }
+        .modal-content { background-color: #0a0a0a; margin: 5% auto; padding: 20px; border: 1px solid #06b6d4; width: 90%; max-width: 1200px; box-shadow: 0 0 20px rgba(6, 182, 212, 0.5); }
+        .close { color: #ec4899; float: right; font-size: 28px; font-weight: bold; }
+        .close:hover, .close:focus { color: #ef4444; text-decoration: none; cursor: pointer; }
+        /* Alert Toast */
+        .toast { position: fixed; top: 20px; right: 20px; z-index: 100; }
+        .toast-item { background-color: #ec4899; color: white; padding: 10px 20px; border-radius: 4px; margin-bottom: 10px; animation: fadeIn 0.5s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="grid-bg min-h-screen p-6">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="flex justify-between items-center border-b border-cyan-800 pb-4 mb-6">
+            <div>
+                <h1 class="text-3xl font-bold text-cyan-400 neon-text-cyan tracking-widest">C2_HUNTER_SYS</h1>
+                <p class="text-xs text-pink-500 mt-1 uppercase tracking-widest">// V3.0 ACTIVE DEFENSE ENCLAVE</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-xs bg-black px-3 py-1 rounded-sm border border-cyan-800 text-cyan-500" id="status-indicator">
+                    [ OFFLINE_LINK ]
+                </div>
+                <div class="text-xs bg-black px-3 py-1 rounded-sm border border-pink-800 text-pink-500" id="active-flows">
+                    Active Flows: 0
+                </div>
+            </div>
+        </header>
+
+        <!-- Search/Filter -->
+        <div class="mb-6 bg-black/60 p-4 rounded-sm neon-border-cyan">
+            <h2 class="text-lg font-bold mb-3 text-cyan-300 uppercase tracking-wide">Anomaly Search</h2>
+            <div class="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-4">
+                <input id="search-ip" placeholder="Filter by IP..." class="bg-gray-900 text-white px-3 py-2 rounded-sm border border-gray-700 flex-1">
+                <input id="search-score" type="number" placeholder="Min Score..." class="bg-gray-900 text-white px-3 py-2 rounded-sm border border-gray-700 w-32">
+                <button id="search-btn" class="bg-cyan-900/50 px-4 py-2 rounded-sm text-cyan-400 hover:bg-cyan-900/70">Search</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div class="bg-black/60 p-5 rounded-sm neon-border-cyan">
+                <h2 class="text-lg font-bold mb-4 border-b border-cyan-800 pb-2 text-cyan-300 uppercase tracking-wide">UEBA Telemetry</h2>
+                <div id="metrics-content" class="text-sm text-gray-300 space-y-2">Establishing uplink...</div>
+            </div>
+
+            <div class="bg-black/60 p-5 rounded-sm neon-border-cyan">
+                <h2 class="text-lg font-bold mb-4 border-b border-cyan-800 pb-2 text-cyan-300 uppercase tracking-wide">UEBA Profiles</h2>
+                <div id="ueba-profiles" class="text-xs text-gray-400 bg-gray-900/80 p-3 rounded-sm h-32 overflow-y-auto border border-gray-800">
+                    Loading profiles...
+                </div>
+            </div>
+
+            <div class="bg-black/60 p-5 rounded-sm neon-border-cyan">
+                <h2 class="text-lg font-bold mb-4 border-b border-cyan-800 pb-2 text-cyan-300 uppercase tracking-wide">Live Process Trees</h2>
+                <div id="process-content" class="text-xs text-gray-400 bg-gray-900/80 p-3 rounded-sm h-32 overflow-y-auto border border-gray-800">
+                    Awaiting anomaly sequence...
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-black/80 p-5 rounded-sm neon-border-pink mb-6">
+            <div class="flex justify-between items-center border-b border-pink-900 pb-2 mb-4">
+                <h2 class="text-lg font-bold text-pink-500 neon-text-pink uppercase tracking-wide">External Threat Intel (CTI)</h2>
+                <span id="cti-filename" class="text-xs text-pink-700"></span>
+            </div>
+            <pre id="cti-content" class="text-xs text-green-400 bg-black p-4 rounded-sm h-48 overflow-y-auto border border-gray-800">
+Querying DFIR databanks...
+            </pre>
+        </div>
+
+        <div class="bg-black/80 p-5 rounded-sm neon-border-cyan">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-cyan-300 uppercase tracking-wide">Active Detections</h2>
+                <div class="flex space-x-2">
+                    <button id="prev-page" class="bg-gray-900 px-3 py-1 rounded-sm text-gray-400 hover:bg-gray-800 disabled:opacity-50">Prev</button>
+                    <span id="page-info" class="text-xs text-gray-500 py-1">Page 1</span>
+                    <button id="next-page" class="bg-gray-900 px-3 py-1 rounded-sm text-gray-400 hover:bg-gray-800 disabled:opacity-50">Next</button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                    <thead>
+                        <tr class="bg-gray-900/50 text-cyan-500 text-xs uppercase tracking-wider">
+                            <th class="p-3 text-left">Timestamp</th>
+                            <th class="p-3 text-left">Process</th>
+                            <th class="p-3 text-left">Destination</th>
+                            <th class="p-3 text-left">MITRE</th>
+                            <th class="p-3 text-left">Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="anomalies-table" class="divide-y divide-gray-800">
+                        <tr><td colspan="5" class="p-3 text-center text-gray-500">Scanning neural pathways...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drill-Down Modal -->
+    <div id="drilldown-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 class="text-2xl font-bold mb-6 text-cyan-400 neon-text-cyan uppercase tracking-widest">Anomaly Drill-Down</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Basic Info -->
+                <div class="bg-black/60 p-4 rounded-sm neon-border-cyan">
+                    <h3 class="text-lg font-bold mb-3 text-cyan-300">Core Metadata</h3>
+                    <div class="space-y-2 text-sm">
+                        <p><span class="text-pink-500">Timestamp:</span> <span id="modal-timestamp"></span></p>
+                        <p><span class="text-pink-500">Process:</span> <span id="modal-process"></span></p>
+                        <p><span class="text-pink-500">Destination:</span> <span id="modal-dst"></span></p>
+                        <p><span class="text-pink-500">MITRE:</span> <span id="modal-mitre"></span></p>
+                        <p><span class="text-pink-500">Score:</span> <span id="modal-score"></span></p>
+                        <p><span class="text-pink-500">Description:</span> <span id="modal-description"></span></p>
+                    </div>
+                </div>
+
+                <!-- Process Tree -->
+                <div class="bg-black/60 p-4 rounded-sm neon-border-cyan">
+                    <h3 class="text-lg font-bold mb-3 text-cyan-300">Process Tree</h3>
+                    <pre id="modal-process-tree" class="text-xs text-gray-300 overflow-y-auto max-h-40"></pre>
+                </div>
+
+                <!-- ML Features -->
+                <div class="bg-black/60 p-4 rounded-sm neon-border-cyan">
+                    <h3 class="text-lg font-bold mb-3 text-cyan-300">ML Features</h3>
+                    <div class="space-y-2 text-sm">
+                        <p><span class="text-pink-500">Entropy:</span> <span id="modal-entropy"></span></p>
+                        <p><span class="text-pink-500">CV:</span> <span id="modal-cv"></span></p>
+                        <p><span class="text-pink-500">Outbound Ratio:</span> <span id="modal-outbound"></span></p>
+                        <p><span class="text-pink-500">ML Result:</span> <span id="modal-ml-result"></span></p>
+                        <p><span class="text-pink-500">Confidence Breakdown:</span> <span id="modal-confidence"></span></p>
+                    </div>
+                </div>
+
+                <!-- Enrichment & Status -->
+                <div class="bg-black/60 p-4 rounded-sm neon-border-cyan">
+                    <h3 class="text-lg font-bold mb-3 text-cyan-300">Enrichment & Status</h3>
+                    <div class="space-y-2 text-sm">
+                        <p><span class="text-pink-500">Suppression:</span> <span id="modal-suppression"></span></p>
+                        <p><span class="text-pink-500">UEBA Profile:</span> <span id="modal-ueba"></span></p>
+                        <p><span class="text-pink-500">XDP Block:</span> <span id="modal-xdp"></span></p>
+                        <p><span class="text-pink-500">Threat Intel:</span> <a id="modal-threat-intel" class="text-cyan-400 hover:text-cyan-300"></a></p>
+                    </div>
+                </div>
+
+                <!-- Timeline Heatmap -->
+                <div class="bg-black/60 p-4 rounded-sm neon-border-cyan md:col-span-2">
+                    <h3 class="text-lg font-bold mb-3 text-cyan-300">Interactive Timeline Heatmap</h3>
+                    <canvas id="modal-heatmap-chart" class="w-full h-48"></canvas>
+                    <div id="modal-timeline-summary" class="mt-2 text-sm text-gray-300"></div>
+                </div>
+
+                <!-- Flows Context -->
+                <div class="bg-black/60 p-4 rounded-sm neon-border-cyan md:col-span-2">
+                    <h3 class="text-lg font-bold mb-3 text-cyan-300">Related Flows (Last Hour)</h3>
+                    <div class="overflow-x-auto max-h-60">
+                        <table class="w-full text-xs border-collapse">
+                            <thead>
+                                <tr class="bg-gray-900/50 text-cyan-500 uppercase tracking-wider">
+                                    <th class="p-2 text-left">TS</th>
+                                    <th class="p-2 text-left">Interval</th>
+                                    <th class="p-2 text-left">Entropy</th>
+                                    <th class="p-2 text-left">Packet Mean</th>
+                                    <th class="p-2 text-left">Suppressed</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modal-flows-table" class="divide-y divide-gray-800"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export Buttons -->
+            <div class="mt-6 flex justify-end space-x-4">
+                <button id="export-json" class="bg-cyan-900/50 px-4 py-2 rounded-sm text-cyan-400 hover:bg-cyan-900/70">Export JSON</button>
+                <button id="export-pcap" class="bg-pink-900/50 px-4 py-2 rounded-sm text-pink-400 hover:bg-pink-900/70">Export PCAP</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container for Alerts -->
+    <div class="toast" id="toast-container"></div>
+
+    <script>
+        let anomaliesData = [];
+        let currentPage = 1;
+        const pageSize = 15;
+        let ws = null;
+        let heatmapChart = null;
+
+        function connectWebSocket() {
+            ws = new WebSocket(`wss://${location.host}/ws/anomalies`);
+            ws.onopen = () => console.log('WebSocket connected');
+            ws.onmessage = (event) => {
+                const newAnomaly = JSON.parse(event.data);
+                anomaliesData.unshift(newAnomaly);
+                renderAnomalies();
+                updateProcessTrees();
+                showAlert(`New Anomaly: ${newAnomaly.description} (Score: ${newAnomaly.score})`);
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 1000);
+            ws.onerror = (error) => console.error('WS error:', error);
+        }
+
+        function showAlert(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast-item';
+            toast.innerText = message;
+            document.getElementById('toast-container').appendChild(toast);
+            setTimeout(() => toast.remove(), 5000);
+        }
+
+        async function fetchData(force = false) {
+            try {
+                const status = document.getElementById('status-indicator');
+                status.innerHTML = '[ ONLINE_LINK ]';
+                status.className = 'text-xs bg-black px-3 py-1 rounded-sm border border-cyan-800 text-cyan-500';
+
+                // Metrics Fetch
+                const metricsRes = await fetch('/api/v1/metrics');
+                const metricsData = await metricsRes.json();
+                if (metricsData.total_flows_tracked) {
+                    const processesHtml = metricsData.top_processes.map(p =>
+                        `<li class="flex justify-between"><span class="text-cyan-400">${p.process_name}</span> <span class="text-gray-500">(${p.count})</span></li>`).join('');
+                    document.getElementById('metrics-content').innerHTML = `
+                        <p>Total Vectors Analyzed: <span class="font-bold text-white">${metricsData.total_flows_tracked}</span></p>
+                        <p class="mt-3 text-cyan-700 uppercase text-xs">Primary Noise Generators:</p>
+                        <ul class="mt-1 space-y-1">${processesHtml}</ul>
+                    `;
+                }
+
+                // Active Flows
+                document.getElementById('active-flows').innerText = `Active Flows: ${metricsData.active_flows || 0}`;
+
+                // CTI Fetch
+                const ctiRes = await fetch('/api/v1/threat_intel');
+                const ctiData = await ctiRes.json();
+                if (ctiData.report) {
+                    document.getElementById('cti-content').innerText = ctiData.report;
+                    if (ctiData.filename) document.getElementById('cti-filename').innerText = `SRC: ${ctiData.filename}`;
+                }
+
+                // UEBA Profiles Fetch
+                const uebaRes = await fetch('/api/v1/ueba_profiles');
+                const uebaData = await uebaRes.json();
+                let uebaHtml = '';
+                for (const [key, profile] of Object.entries(uebaData.profiles || {})) {
+                    uebaHtml += `<div class="mb-2"><span class="text-cyan-400">${key}</span>: Mean Interval ${profile.stats.mean_interval.toFixed(2)}s</div>`;
+                }
+                document.getElementById('ueba-profiles').innerHTML = uebaHtml || 'No profiles available';
+
+                // Anomalies Fetch (with filters)
+                const ipFilter = document.getElementById('search-ip').value;
+                const scoreFilter = document.getElementById('search-score').value;
+                let anomaliesUrl = `/api/v1/anomalies?limit=1000`;
+                if (ipFilter) anomaliesUrl += `&ip=${encodeURIComponent(ipFilter)}`;
+                if (scoreFilter) anomaliesUrl += `&min_score=${scoreFilter}`;
+                const anomaliesRes = await fetch(anomaliesUrl);
+                anomaliesData = await anomaliesRes.json();
+
+                renderAnomalies();
+                updateProcessTrees();
+
+            } catch (error) {
+                console.error("Link error:", error);
+                const status = document.getElementById('status-indicator');
+                status.innerHTML = '[ OFFLINE_LINK ]';
+                status.className = 'text-xs bg-black px-3 py-1 rounded-sm border border-red-800 text-red-500';
+            }
+        }
+
+        function renderAnomalies() {
+            const start = (currentPage - 1) * pageSize;
+            const end = start + pageSize;
+            const paginated = anomaliesData.slice(start, end);
+
+            let tableHtml = '';
+            paginated.forEach(a => {
+                let isCrit = a.score >= 90;
+                let rowClass = isCrit ? 'bg-pink-900/20 hover:bg-pink-900/40' : 'hover:bg-gray-800/50';
+                let scoreColor = isCrit ? 'text-pink-500 font-bold neon-text-pink' : 'text-yellow-500';
+
+                tableHtml += `
+                    <tr class="${rowClass} transition-colors cursor-pointer" data-timestamp="${a.timestamp}">
+                        <td class="p-3 whitespace-nowrap text-gray-400 text-xs">${new Date(a.timestamp).toLocaleTimeString()}</td>
+                        <td class="p-3 text-cyan-400">${a.process} <span class="text-gray-600">[${a.pid}]</span></td>
+                        <td class="p-3 text-gray-300">${a.dst_ip}:${a.dst_port}</td>
+                        <td class="p-3 text-xs text-purple-400">${a.mitre_technique || 'T1071'}</td>
+                        <td class="p-3 ${scoreColor}">${a.score}</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('anomalies-table').innerHTML = tableHtml || '<tr><td colspan="5" class="p-3 text-center text-gray-500">No anomalies match filters</td></tr>';
+            document.getElementById('page-info').innerText = `Page ${currentPage} of ${Math.ceil(anomaliesData.length / pageSize)}`;
+
+            document.getElementById('prev-page').disabled = currentPage === 1;
+            document.getElementById('next-page').disabled = currentPage >= Math.ceil(anomaliesData.length / pageSize);
+
+            // Re-attach click handlers
+            document.querySelectorAll('#anomalies-table tr[data-timestamp]').forEach(row => {
+                row.addEventListener('click', openModal);
+            });
+        }
+
+        function updateProcessTrees() {
+            let processTreesHtml = '';
+            anomaliesData.slice(0, 15).forEach(a => {
+                if (a.process_tree) {
+                    processTreesHtml += `<div class="mb-2 border-l-2 border-cyan-800 pl-2"><span class="text-pink-500">[${a.pid}]</span> ${a.process_tree}</div>`;
+                }
+            });
+            document.getElementById('process-content').innerHTML = processTreesHtml || 'No recent trees';
+        }
+
+        async function openModal(event) {
+            const timestamp = event.currentTarget.dataset.timestamp;
+            if (!timestamp) return;
+
+            try {
+                const res = await fetch(`/api/v1/anomaly/${timestamp}`);
+                const data = await res.json();
+
+                // Populate basic fields
+                document.getElementById('modal-timestamp').innerText = data.timestamp;
+                document.getElementById('modal-process').innerText = `${data.process} [PID: ${data.pid}]`;
+                document.getElementById('modal-dst').innerText = `${data.dst_ip}:${data.dst_port}`;
+                document.getElementById('modal-mitre').innerText = `${data.mitre_tactic} / ${data.mitre_technique} (${data.mitre_name})`;
+                document.getElementById('modal-score').innerText = data.score;
+                document.getElementById('modal-description').innerText = data.description;
+
+                document.getElementById('modal-process-tree').innerText = data.process_tree || 'N/A';
+
+                document.getElementById('modal-entropy').innerText = data.entropy.toFixed(3);
+                document.getElementById('modal-cv').innerText = data.cv.toFixed(3);
+                document.getElementById('modal-outbound').innerText = data.outbound_ratio.toFixed(3);
+                document.getElementById('modal-ml-result').innerText = data.ml_result || 'N/A';
+                document.getElementById('modal-confidence').innerText = data.reasons?.join('; ') || 'N/A';
+
+                document.getElementById('modal-suppression').innerText = data.enrichment?.suppression_status || 'Unknown';
+                document.getElementById('modal-ueba').innerText = data.enrichment?.ueba_profile || 'N/A';
+                document.getElementById('modal-xdp').innerText = 'Not Blocked'; // Stub
+                const threatLink = document.getElementById('modal-threat-intel');
+                threatLink.href = data.enrichment?.threat_intel || '#';
+                threatLink.innerText = data.enrichment?.threat_intel ? 'View Report' : 'N/A';
+
+                // Flows table
+                let flowsHtml = '';
+                (data.flows_context || []).forEach(f => {
+                    flowsHtml += `
+                        <tr class="hover:bg-gray-800/50">
+                            <td class="p-2">${new Date(f.timestamp * 1000).toLocaleTimeString()}</td>
+                            <td class="p-2">${f.interval.toFixed(2)}s</td>
+                            <td class="p-2">${f.entropy.toFixed(3)}</td>
+                            <td class="p-2">${f.packet_size_mean.toFixed(0)}</td>
+                            <td class="p-2">${f.suppressed ? 'Yes' : 'No'}</td>
+                        </tr>
+                    `;
+                });
+                document.getElementById('modal-flows-table').innerHTML = flowsHtml || '<tr><td colspan="5" class="p-2 text-center">No related flows</td></tr>';
+
+                // Interactive Heatmap with Chart.js + Zoom
+                const timeline = data.timeline || {last_24h: [], last_7d: []};
+                document.getElementById('modal-timeline-summary').innerHTML = `
+                    <p>Last 24h: ${timeline.last_24h.length} events</p>
+                    <p>Last 7d: ${timeline.last_7d.length} events</p>
+                `;
+
+                const ctx = document.getElementById('modal-heatmap-chart').getContext('2d');
+                if (heatmapChart) heatmapChart.destroy();
+
+                // Bin data for heatmap (e.g., hourly for 7d)
+                const bins = Array(168).fill(0); // 7 days * 24 hours
+                const now = new Date().getTime() / 1000;
+                timeline.last_7d.forEach(ts => {
+                    const hourDiff = Math.floor((now - ts) / 3600);
+                    if (hourDiff < 168) bins[hourDiff]++;
+                });
+
+                heatmapChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: bins.map((_, i) => `Hour -${i}`),
+                        datasets: [{
+                            label: 'Anomaly Count',
+                            data: bins,
+                            backgroundColor: bins.map(count => count > 5 ? '#ef4444' : count > 2 ? '#ec4899' : '#06b6d4')
+                        }]
+                    },
+                    options: {
+                        scales: { y: { beginAtZero: true } },
+                        plugins: {
+                            zoom: {
+                                zoom: { wheel: { enabled: true }, mode: 'x' },
+                                pan: { enabled: true, mode: 'x' }
+                            },
+                            tooltip: { callbacks: { label: (ctx) => `${ctx.raw} events` } }
+                        },
+                        onClick: (e, elements) => {
+                            if (elements.length) {
+                                const index = elements[0].index;
+                                alert(`Hour -${index}: ${bins[index]} events`); // Drill deeper if needed
+                            }
+                        }
+                    }
+                });
+
+                // Export JSON
+                document.getElementById('export-json').onclick = () => {
+                    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `anomaly_${timestamp}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                };
+
+                // Enhanced PCAP Export
+                document.getElementById('export-pcap').onclick = async () => {
+                    try {
+                        const pcapRes = await fetch(`/api/v1/anomaly/${timestamp}/pcap`);
+                        if (!pcapRes.ok) throw new Error('PCAP generation failed');
+                        const blob = await pcapRes.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `anomaly_${timestamp}.pcap`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                    } catch (error) {
+                        alert(`PCAP export error: ${error.message}`);
+                    }
+                };
+
+                // Show modal
+                document.getElementById('drilldown-modal').style.display = 'block';
+            } catch (error) {
+                console.error('Drill-down error:', error);
+                alert('Failed to load details');
+            }
+        }
+
+        // Pagination Handlers
+        document.getElementById('prev-page').addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderAnomalies(); } });
+        document.getElementById('next-page').addEventListener('click', () => { currentPage++; renderAnomalies(); });
+
+        // Search Handler
+        document.getElementById('search-btn').addEventListener('click', () => fetchData(true));
+
+        // Modal close
+        const modal = document.getElementById('drilldown-modal');
+        const span = document.getElementsByClassName('close')[0];
+        span.onclick = () => { modal.style.display = 'none'; }
+        window.onclick = (event) => { if (event.target == modal) modal.style.display = 'none'; }
+
+        fetchData();
+        setInterval(fetchData, 5000);
+        connectWebSocket();
+    </script>
+</body>
+</html>

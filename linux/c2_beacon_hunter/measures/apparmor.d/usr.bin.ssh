@@ -1,0 +1,20 @@
+# /etc/apparmor.d/usr.bin.ssh
+#include <tunables/global>
+
+profile ssh /usr/bin/ssh {
+  #include <abstractions/base>
+  #include <abstractions/consoles>
+
+  network inet,
+  network inet6,
+
+  /usr/lib/** r,
+  /etc/** r,
+
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/python* x,
+  deny /usr/bin/curl x,
+
+  owner @{HOME}/** rw,
+}

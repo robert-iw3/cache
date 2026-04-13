@@ -1,0 +1,32 @@
+title: Suspicious ASP.NET DLL Creation for SharePoint Webshell
+id: 5644788b-792f-4abb-8455-ed81b001bc94
+status: experimental
+description: Detects the creation of a compiled ASP.NET DLL file in a temporary directory, which is a known indicator for webshells like Godzilla being deployed after exploiting SharePoint vulnerabilities (e.g., CVE-2025-53770, CVE-2025-53771). The rule specifically looks for files related to `spinstall.aspx`.
+references:
+  - https://kerberpoasting.medium.com/sharepoint-of-no-return-analysing-the-godzilla-webshell-cve-2025-53770-cve-2025-53771-a4e8e6a74bd1
+author: Rob Weber
+date: 2025-07-26
+tags:
+  - attack.persistence
+  - attack.defense_evasion
+  - attack.t1505.003
+  - attack.t1036.005
+  - tool.godzilla
+  - cve.2025.53770
+  - cve.2025.53771
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection:
+        # Detects the creation of a DLL related to 'spinstall' in the ASP.NET temporary compilation folder.
+    TargetFilename|contains|all:
+      - 'C:\Windows\Microsoft.NET\Framework64\'
+      - '\Temporary ASP.NET Files\root\'
+      - '\App_Web_'
+      - 'spinstall'
+      - '.dll'
+  condition: selection
+falsepositives:
+  - Legitimate compilation of an ASP.NET file named 'spinstall.aspx' could trigger this, but this is highly unlikely in most environments. The name is specific enough to be a strong indicator of compromise.
+level: high

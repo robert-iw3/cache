@@ -1,0 +1,49 @@
+[Unit]
+Description=c2_beacon_hunter  - Native Linux C2 Beacon & Channel Detector
+After=network.target auditd.service
+Wants=auditd.service
+
+[Service]
+Type=simple
+# === REQUIRED: EDIT THESE TWO LINES WITH YOUR ABSOLUTE PATH ===
+WorkingDirectory=/path/to/c2_beacon_hunter
+ExecStart=/path/to/c2_beacon_hunter/venv/bin/python /path/to/c2_beacon_hunter/c2_beacon_hunter.py
+
+# Graceful shutdown (calls graceful_shutdown.sh for clean final export)
+ExecStop=/path/to/c2_beacon_hunter/graceful_shutdown.sh
+
+Restart=always
+RestartSec=5
+User=root
+Group=root
+
+# Logging to journal (view with: journalctl -u c2_beacon_hunter -f)
+StandardOutput=journal
+StandardError=journal
+
+# ====================== SECURITY HARDENING ======================
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+NoNewPrivileges=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+# Allow required host access for monitoring
+ReadWritePaths=/app/output /proc /var/log/audit
+SupplementaryGroups=adm
+
+# Resource limits (prevents resource exhaustion)
+LimitNOFILE=65535
+CPUQuota=20%
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1056 @@
+============================================================
+[*] ENHANCED BEHAVIORAL CTI ENRICHMENT
+============================================================
+------------------------------------------------------------
+TARGET IP: 104.18.94.41
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 6)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products: CloudFlare
+
+------------------------------------------------------------
+TARGET IP: 104.18.95.41
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 10)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products: CloudFlare
+
+------------------------------------------------------------
+TARGET IP: 104.26.12.204
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 104.26.12.38
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products: CloudFlare
+
+------------------------------------------------------------
+TARGET IP: 108.156.156.227
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.102
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: cobalt strike
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.113
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.119
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.132
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.136
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.138
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 5)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 108.177.122.139
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 4)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 140.82.112.21
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 8)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 140.82.112.3
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: cobalt strike, cobaltstrike, metasploit
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 140.82.112.6
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 3)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 140.82.113.21
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 13)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 140.82.113.22
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: brute force
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 140.82.113.4
+------------------------------------------------------------
+       - VT Malicious Hits: 1
+       - Behavior/Categories: None
+       - C2 Framework Match: cobalt strike, cobaltstrike, metasploit
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 140.82.114.21
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 10)
+       - Abuse Confidence Score: 1%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 140.82.114.22
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 14)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 140.82.114.3
+------------------------------------------------------------
+       - VT Malicious Hits: 1
+       - Behavior/Categories: None
+       - C2 Framework Match: Cobalt Strike, brute force, cobalt strike, cobaltstrike, metasploit
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 140.82.114.4
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: Cobalt Strike, brute force, cobalt strike, cobaltstrike, metasploit
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 142.250.105.155
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 142.250.105.95
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 142.250.9.132
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 142.250.9.95
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 7%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 142.251.15.100
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 142.251.15.101
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 142.251.15.132
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 142.251.15.91
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 151.101.1.91
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: T1110.001 (Brute Force: Password Guessing), brute
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products: nginx
+
+------------------------------------------------------------
+TARGET IP: 151.101.13.91
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 151.101.17.91
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 151.101.53.91
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.217.135.134
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.217.135.136
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.217.135.39
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 172.217.135.71
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.217.135.9
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.217.215.136
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.253.124.113
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.253.124.119
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.253.124.94
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 172.253.124.95
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 173.194.184.10
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 3)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.184.168
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.184.8
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.184.89
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.184.9
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.20.142
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.20.216
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.219.100
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 173.194.219.101
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 173.194.219.102
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.219.113
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.219.119
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.53.200
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.10
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.134
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.201
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.232
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.39
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.73
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 173.194.7.74
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 185.199.110.153
+------------------------------------------------------------
+       - VT Malicious Hits: 1
+       - Behavior/Categories: None
+       - C2 Framework Match: brute force, cobalt strike, cobaltstrike, metasploit
+       - Abuse Confidence Score: 27%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products:
+
+------------------------------------------------------------
+TARGET IP: 185.199.110.154
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 17)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 192.0.77.2
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: cobalt strike, manjusaka
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 209.85.164.198
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 216.239.38.60
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 3.161.193.3
+------------------------------------------------------------
+       - VT Malicious Hits: 1
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 34.107.221.82
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 32)
+       - Abuse Confidence Score: 37%
+       - JARM TLS Fingerprint:
+       - Fingerprinted Products: nginx
+
+------------------------------------------------------------
+TARGET IP: 34.107.243.93
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: brute
+       - Abuse Confidence Score: 71%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 34.160.144.191
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: insecure
+       - Abuse Confidence Score: 32%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 35.196.109.67
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 45.32.219.28
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.176.119
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.176.132
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.176.95
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 7%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.177.119
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.103
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.104
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.105
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.106
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 1)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.113
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: cobalt strike
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.147
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 64.233.185.95
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 1%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 66.85.230.108
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.136.113
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.136.136
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.136.94
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 2)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.138.132
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.138.136
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.138.93
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.102
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.137
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.196
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.227
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.39
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 4%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.42
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.73
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.155.74
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.21.119
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.9.201
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.125.9.230
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+------------------------------------------------------------
+TARGET IP: 74.221.180.109
+------------------------------------------------------------
+       - VT Malicious Hits: 0
+       - Behavior/Categories: None
+       - C2 Framework Match: No specific framework match (Associated Pulses: 0)
+       - Abuse Confidence Score: 0%
+       - JARM TLS Fingerprint: None
+       - Fingerprinted Products: None
+
+============================================================
+[*] Enrichment Complete. See ../output/threat_intel_report_20260302_194607.txt
+============================================================

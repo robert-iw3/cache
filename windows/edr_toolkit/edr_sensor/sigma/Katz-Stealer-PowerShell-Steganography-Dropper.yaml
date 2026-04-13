@@ -1,0 +1,47 @@
+title: Katz Stealer PowerShell Steganography Dropper
+id: addbeb6e-13ec-4746-a1b5-8c41685ee523
+status: experimental
+description: Detects PowerShell commands used by Katz Stealer to download an image file containing a steganographically hidden payload, which is then decoded and executed in memory.
+references:
+  - https://www.sentinelone.com/blog/katz-stealer-powerful-maas-on-the-prowl-for-credentials-and-crypto-assets/
+author:
+date: 2025-07-23
+tags:
+  - attack.t1059.001
+  - attack.t1001.002
+  - attack.execution
+  - attack.command_and_control
+  - malware.katz_stealer
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_process:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+  selection_download:
+        # Keywords for downloading content from the web
+    CommandLine|contains:
+      - 'Net.WebClient'
+      - 'DownloadString'
+      - 'DownloadFile'
+      - 'Invoke-WebRequest'
+      - 'iwr'
+  selection_decode_exec:
+        # Keywords for decoding Base64 and executing in memory
+    CommandLine|contains|all:
+      - 'FromBase64String'
+      - 'IEX'        # IEX is an alias for Invoke-Expression
+  selection_img_ext:
+        # Common image file extensions that may be seen in the URL
+    CommandLine|contains:
+      - '.jpg'
+      - '.png'
+      - '.gif'
+      - '.bmp'
+      - '.jpeg'
+  condition: all of selection_*
+falsepositives:
+  - Legitimate administration scripts that download encoded content from URLs ending in an image extension. This is not a common pattern, but it is possible.
+level: high

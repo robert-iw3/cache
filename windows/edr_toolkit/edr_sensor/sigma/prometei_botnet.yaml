@@ -1,0 +1,28 @@
+title: Prometei Botnet Network Activity
+id: f8e7d6c5-b4a3-2109-8765-4321fedcba98
+status: stable
+description: Detects network connections utilizing specific URL paths associated with Prometei botnet malware distribution and command-and-control (C2) communication.
+author:
+date: 2025-06-22
+references:
+    - https://unit42.paloaltonetworks.com/prometei-botnet-2025-activity/
+logsource:
+    category: network_connection
+detection:
+    selection_url_path:
+        # This part assumes logs contain URL path information (e.g., proxy logs, web server access logs, or endpoint network logs with URL details)
+        Url|contains:
+            - '/k.php'
+            - '/cgi-bin/p.cgi'
+    condition: selection_url_path
+falsepositives:
+    - Legitimate traffic to web servers hosting paths `/k.php` or `/cgi-bin/p.cgi` (unlikely for these specific patterns in a malicious context).
+level: high
+tags:
+    - attack.t1071.001 # Application Layer Protocol: Web Protocols
+    - attack.ta0011 # Command and Control
+    - attack.t1496 # Resource Hijacking (for cryptomining)
+    - malware.prometei
+    - botnet
+    - cryptominer
+    - linux

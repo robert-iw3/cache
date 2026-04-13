@@ -1,0 +1,31 @@
+title: APT28 COM Hijacking for Persistence
+id: 0568efdb-30f6-4449-86a2-8d58269e1bff
+status: experimental
+description: Detects COM hijacking techniques used by APT28 for persistence. The threat actor modifies specific CLSID InProcServer32 registry keys to point to their malicious DLLs, which are then loaded by legitimate processes like explorer.exe or the SystemSoundsService scheduled task.
+author: Rob Weber
+date: 2025-07-27
+tags:
+  - attack.persistence
+  - attack.t1546.015
+  - threat_actor.apt28
+  - malware.beardshell
+  - malware.covenant
+logsource:
+  category: registry_set
+  product: windows
+detection:
+  # Detects registry modifications related to specific COM objects used by APT28
+  selection:
+    TargetObject|contains:
+      # This CLSID is hijacked to load ctec.dll via explorer.exe
+      - '\Software\Classes\CLSID\{2227A280-3AEA-1069-A2DE-08002B30309D}\InProcServer32'
+      # This CLSID is hijacked to load PlaySndSrv.dll via the SystemSoundsService scheduled task
+      - '\Software\Classes\CLSID\{2DEA658F-54C1-4227-AF9B-260AB5FC3543}\InProcServer32'
+    Details|endswith:
+      # The malicious DLLs used in this campaign
+      - '\ctec.dll'
+      - '\PlaySndSrv.dll'
+  condition: selection
+falsepositives:
+  - This detection is highly specific to the APT28 campaign and is unlikely to generate false positives.
+level: high

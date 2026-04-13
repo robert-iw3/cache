@@ -1,0 +1,118 @@
+title: UAC-0057 (Ghostwriter/UNC1151) Activity
+id: 67890dd2-33f3-4955-97ec-859901b60b19
+status: experimental
+description: >-
+  This rule detects various TTPs and IOCs associated with UAC-0057 (aka Ghostwriter, UNC1151) campaigns targeting Ukraine and Poland.
+  It covers suspicious file creation, persistence mechanisms, command execution, and network C2 patterns.
+author: RW
+date: 2025-08-21
+tags:
+  - attack.initial_access
+  - attack.execution
+  - attack.persistence
+  - attack.command_and_control
+  - attack.t1566.001
+  - attack.t1204.002
+  - attack.t1027
+  - attack.t1547.001
+  - attack.t1071.001
+  - threat_group.uac-0057
+  - threat_group.unc1151
+logsource:
+  category:
+    - process_creation
+    - file_event
+    - registry_set
+    - network_connection
+  product: windows
+detection:
+  selection_hash:
+    - file.hash.sha256:
+        - 'f6fec3722a8c98c29c5de10969b8f70962dbb47ba53dcbcd4a3bbc63996d258d'
+        - 'deaa3f807de097c3bfff37a41e97af5091b2df0e3a6d01a11a206732f9c6e49c'
+        - 'aac430127c438224ec61a6c02ea59eb3308eb54297daac985a7b26a75485e55f'
+        - '06380c593d122fc4987e9d4559a9573a74803455809e89dd04d476870a427cbe'
+        - '082877e6f8b28f6cf96d3498067b0c404351847444ebc9b886054f96d85d55d4'
+        - '082903a8bec2b0ef7c7df3e75871e70c996edcca70802d100c7f68414811c804'
+        - '69636ddc0b263c93f10b00000c230434febbd49ecdddf5af6448449ea3a85175'
+        - 'a2a2f0281eed6ec758130d2f2b2b5d4f578ac90605f7e16a07428316c9f6424e'
+        - '8a057d88a391a89489697634580e43dbb14ef8ab1720cb9971acc418b1a43564'
+        - '707a24070bd99ba545a4b8bab6a056500763a1ce7289305654eaa3132c7cbd36'
+        - '5fa19aa32776b6ab45a99a851746fbe189f7a668daf82f3965225c1a2f8b9d36'
+        - '3b5980c758bd61abaa4422692620104a81eefbf151361a1d8afe8e89bf38579d'
+        - 'c7e44bba26c9a57d8d0fa64a140d58f89d42fd95638b8e09bc0d2020424b640e'
+        - '7c77d1ba7046a4b47aec8ec0f2a5f55c73073a026793ca986af22bbf38dc948c'
+        - '559ee2fad8d16ecaa7be398022aa7aa1adbd8f8f882a34d934be9f90f6dcb90b'
+  selection_path:
+    file.path|contains:
+      - '\Temp\DefenderProtectionScope.log'
+      - '\Microsoft\System\ProtectedCertSystem.dll'
+      - '\Serv\0x00bac729fe.log'
+      - '\Microsoft\Windows\Protection overview.lnk'
+      - '\Temp\sdw9gobh0n'
+      - '\Microsoft\Windows\Protection overview past.lnk'
+      - '\Logs\sdw9gobh0n.log'
+      - '\SDXHelp\SDXHelp.dll'
+      - '\Runtime\RuntimeBroker.dll'
+      - '\MSDE\mrasp86.dll'
+      - '\DiagnosticComponents\DiagnosticComponents.dll'
+      - '\ProgramData\OfficeRuntimeBroker.xlam'
+      - '\ProgramData\OfficeRuntimeBroker.lnk'
+      - '\ProgramData\~OfficeRuntimeBroker.dat'
+      - '\ProgramData\ssh\ssh.pif.pif.pif'
+      - '\ProgramData\~DF20BC61C6277A354A.dat'
+  selection_registry:
+    target.registry.key|contains: '\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    target.registry.value:
+      - 'SytemProtectionService'
+      - 'MicrosoftDefender'
+      - 'SytemProtectService'
+      - 'Audio Driver'
+  selection_proc_rundll32:
+    process.image|endswith: '\rundll32.exe'
+    process.command_line|contains:
+      - ',#1'
+      - ',TS_STATUS_INFO_get0_status'
+      - 'shell32.dll,ShellExec_RunDLL'
+  selection_proc_expand:
+    process.parent.image|endswith: '\excel.exe'
+    process.image|endswith: '\expand.exe'
+    process.command_line|contains|all:
+      - '.xlam'
+      - '.dat'
+      - 'ProgramData'
+  selection_net_c2:
+    network.destination.domain:
+      - 'sweetgeorgiayarns.online'
+      - 'kitchengardenseeds.icu'
+      - 'punandjokes.icu'
+      - 'taskandpurpose.icu'
+      - 'medpagetoday.icu'
+      - 'pesthacks.icu'
+      - 'curseforge.icu'
+  selection_net_ua:
+    network.http.user_agent:
+      - 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.80 Safari/537.36'
+      - 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/133.0.6943.84 Mobile/15E148 Safari/604.1'
+  selection_net_slack:
+    network.url|contains: 'hooks.slack.com/services/'
+  filter_net_slack:
+    process.name:
+      - 'slack.exe'
+      - 'chrome.exe'
+      - 'firefox.exe'
+      - 'msedge.exe'
+      - 'iexplore.exe'
+  condition: >
+    selection_hash or
+    selection_path or
+    selection_registry or
+    selection_proc_rundll32 or
+    selection_proc_expand or
+    selection_net_c2 or
+    (selection_net_ua and selection_net_c2) or
+    (selection_net_slack and not filter_net_slack)
+falsepositives:
+  - Legitimate software creating files in the specified paths, although the filenames are quite specific.
+  - Network connections to Slack webhooks from legitimate, but unlisted, applications may cause false positives. This may require tuning based on your environment's baseline activity.
+level: high

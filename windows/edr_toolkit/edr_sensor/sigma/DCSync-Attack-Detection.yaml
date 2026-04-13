@@ -1,0 +1,31 @@
+title: Potential DCSync Attack
+id: b3e10457-44ba-49fc-811b-d11c4c836f6f
+status: experimental
+description: |
+  Detects potential DCSync attacks where a non-domain controller machine requests directory replication rights.
+  This attack allows an adversary to simulate the behavior of a Domain Controller (DC) and retrieve password hashes and other sensitive data from other DCs.
+  The rule looks for Event ID 4662 where access is requested for specific Directory Service replication GUIDs from an account that is not a machine account (i.e., not ending in '$').
+author: RW
+date: 2025-08-22
+tags:
+  - attack.credential_access
+  - attack.t1003.006
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4662 # An operation was performed on an object.
+    ObjectServer: 'DS'
+    ObjectType: '{19195a5b-6da0-11d0-afd3-00c04fd930c9}' # Corresponds to the domainDNS object class.
+    Properties|contains:
+      # Access mask contains specific GUIDs for directory replication
+      - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2' # DS-Replication-Get-Changes
+      - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2' # DS-Replication-Get-Changes-All
+  filter:
+    SubjectAccountName|endswith: '$' # Exclude machine accounts, as legitimate replication occurs between Domain Controllers.
+  condition: selection and not filter
+falsepositives:
+  - Legitimate use of replication by third-party tools like Azure AD Connect or other identity management solutions. These tools may use service accounts that do not end with '$'. These accounts should be whitelisted.
+  - Some administrative or monitoring tools might trigger this event.
+level: high

@@ -1,0 +1,77 @@
+title: HelloTDS Infrastructure Network Communication
+id: 1e51a7a4-4122-425d-8a99-54baeffad2c6
+status: experimental
+description: Detects network connections to domains and IP addresses associated
+  with the HelloTDS Traffic Direction System (TDS) infrastructure. This TDS is
+  known for delivering FakeCaptcha, tech scams, and other malware by
+  fingerprinting visitors and redirecting them to malicious landing pages.
+references:
+  - https://www.gendigital.com/blog/insights/research/inside-hellotds-malware-network
+author:
+date: 2025-07-10
+tags:
+  - attack.initial_access
+  - attack.t1566
+  - malware.fakecaptcha
+  - network.traffic_direction_system
+logsource:
+  category: network_traffic
+  product: zeek
+detection:
+  selection_domains:
+    # Known domains associated with HelloTDS entry points, redirectors, and landing pages
+    destination.domain|endswith:
+      - 'dailyuploads.net'
+      - 'streamtape.to'
+      - 'streamtape.net'
+      - 'watchadsontape.com'
+      - 'bigwarp.art'
+      - 'savefiles.com'
+      - 'yr.unasonoric.com'
+      - 'gq.binesyorker.com'
+      - 'sb.rowlandpodogyn.shop'
+      - 'nutatedtriol.com'
+      - 'mixscoggan.shop'
+      - 'bu.unrimedironize.shop'
+      - 'actednow.com'
+      - 'buzzflying.shop'
+      - 'goldtera.live'
+      - 'orbito.online'
+      - 'bestfree4u.com'
+      - 'avs4u.net'
+      - 'arcadeclassic.org'
+      - 'adelaidavizcaino.com'
+      - 'partage-de-medias.fly.storage.tigris.dev'
+      - 'finding-from-internet.fly.storage.tigris.dev'
+  selection_ips:
+    destination.ip:
+      # Known IP addresses and ranges used by HelloTDS infrastructure
+      - '5.161.37.228'
+      - '5.161.110.119'
+      - '5.161.178.111'
+      - '23.105.163.27'
+      - '23.105.163.55'
+      - '34.142.174.238'
+      - '172.104.80.249'
+      - '23.83.64.0/22'
+      - '23.109.120.0/22'
+      - '23.109.128.0/19'
+      - '23.109.170.0/24'
+      - '94.242.232.0/21'
+      - '172.240.104.0/21'
+      - '172.241.48.0/21'
+      - '172.255.96.0/20'
+      - '173.0.146.0/23'
+      - '173.237.64.0/20'
+      - '188.42.104.0/21'
+      - '188.42.240.0/21'
+      - '209.192.192.0/18'
+      - '212.117.184.0/21'
+  selection_header:
+    # Unique HTTP header observed in responses from HelloTDS servers
+    http.response.header.access-control-allow-headers|contains: 'megageocheckolololo'
+  condition: selection_domains or selection_ips or selection_header
+falsepositives:
+  - Domains can be sinkholed or re-registered for benign purposes after the
+    campaign.
+level: high

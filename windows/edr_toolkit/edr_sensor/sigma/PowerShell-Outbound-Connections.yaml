@@ -1,0 +1,35 @@
+title: PowerShell Outbound Network Connection
+id: aa4b6a95-523f-4a21-81f1-3e46b942f85d
+status: experimental
+description: Detects PowerShell initiating outbound network connections to non-private IP addresses. This is often an indicator of C2 communication, data exfiltration, or the downloading of additional malicious payloads, as PowerShell is not typically used for general web browsing by users.
+references:
+author: RW
+date: 2025-08-06
+tags:
+  - attack.t1071
+  - attack.ta0011
+  - attack.command_and_control
+logsource:
+  category: network_connection
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\powershell.exe'
+        # Medium comment: The 'Initiated' field is specific to Sysmon Event ID 3 and indicates an outbound connection.
+    Initiated: true
+  filter_private_ips:
+        # Medium comment: Filters out traffic to private, loopback, and link-local addresses to reduce noise from internal activities.
+    DestinationIp:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+      - '127.0.0.0/8'
+      - '169.254.0.0/16'
+      - '::1'
+      - 'fe80::/10'
+  condition: selection and not filter_private_ips
+falsepositives:
+  - Legitimate administrative scripts that interact with external APIs or services (e.g., cloud services like Azure, AWS, or Microsoft 365).
+  - Scripts used for software updates or package management (e.g., interacting with the PowerShell Gallery).
+  - Legitimate security tools or scripts that perform external lookups.
+level: medium

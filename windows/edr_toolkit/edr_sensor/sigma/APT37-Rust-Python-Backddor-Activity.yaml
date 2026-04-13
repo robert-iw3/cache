@@ -1,0 +1,105 @@
+title: APT37 Rustonotto, Chinotto, and FadeStealer Activity
+id: cbcd1782-6bc1-46e9-ad14-3f2d03f39189
+status: experimental
+description: >-
+  Detects various Tactics, Techniques, and Procedures (TTPs) associated with the APT37 threat actor, including the use of
+  Rustonotto, Chinotto, and FadeStealer malware. This rule identifies specific file hashes, file paths, process command
+  lines, registry modifications for persistence, and C2 communication patterns.
+references:
+  - https://www.zscaler.com/blogs/security-research/apt37-targets-windows-rust-backdoor-and-python-loader
+author: RW
+date: 2025-09-08
+tags:
+  - attack.persistence
+  - attack.execution
+  - attack.defense_evasion
+  - attack.collection
+  - attack.command_and_control
+  - attack.exfiltration
+  - attack.t1053.005
+  - attack.t1547.001
+  - attack.t1218.005
+  - attack.t1059.001
+  - attack.t1055.013
+  - attack.t1560.001
+  - attack.t1071.001
+  - attack.t1132.001
+  - attack.t1041
+logsource:
+  - category: process_creation
+    product: windows
+  - category: file_event
+    product: windows
+  - category: registry_set
+    product: windows
+  - category: proxy
+detection:
+    # IOC match based on known malicious file hashes
+  hashes:
+    MD5:
+      - 'b9900bef33c6cc9911a5cd7eeda8e093'
+      - '7967156e138a66f3ee1bfce81836d8d0'
+      - '77a70e87429c4e552649235a9a2cf11a'
+      - '04b5e068e6f0079c2c205a42df8a3a84'
+      - 'd2b34b8bfafd6b17b1cf931bb3fdd3db'
+      - '3d6b999d65c775c1d27c8efa615ee520'
+      - '89986806a298ffd6367cf43f36136311'
+      - '4caa44930e5587a0c9914bda9d240acc'
+    # File creation artifacts related to FadeStealer and other tools
+  file_create_specific:
+    TargetFilename:
+      - 'C:\ProgramData\3HNoWZd.exe'
+      - 'C:\ProgramData\wonder.cab'
+      - 'C:\ProgramData\tele_update.exe'
+      - 'C:\ProgramData\tele.conf'
+      - 'C:\ProgramData\tele.dat'
+      - 'C:\ProgramData\Password.chm'
+      - 'C:\ProgramData\1.html'
+  file_create_fadestealer_dirs:
+    TargetFilename|contains:
+      - '\VSTelems_Fade\NgenPdbk'
+      - '\VSTelems_Fade\NgenPdbc'
+      - '\VSTelems_Fade\NgenPdbm'
+      - '\VSTelems_FadeOut'
+      - '\VSTelems_FadeIn'
+  file_create_fadestealer_rar:
+    TargetFilename|endswith: '.rar'
+    TargetFilename|startswith:
+      - 'watch_'
+      - 'usb_'
+      - 'data_'
+    # Suspicious process executions for persistence and payload deployment
+  proc_schtasks:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - 'MicrosoftUpdate'
+      - '3HNoWZd.exe'
+  proc_mshta:
+    Image|endswith: '\mshta.exe'
+    CommandLine|contains: 'http'
+  proc_expand:
+    ParentImage|endswith: '\cmd.exe'
+    Image|endswith: '\expand.exe'
+    CommandLine|contains: 'c:\programdata\wonder.cab'
+  proc_teleupdate:
+    Image: 'c:\programdata\tele_update.exe'
+    # Registry modification for persistence via Run key
+  reg_run:
+    TargetObject|endswith: '\Software\Microsoft\Windows\CurrentVersion\Run\OnedriveStandaloneUpdater'
+    Details|contains|all:
+      - 'mshta'
+      - 'http'
+    # C2 communication pattern observed in web proxy logs
+  proxy_c2:
+    selection:
+      c-uri|contains: 'U='
+    filter:
+      c-uri|contains:
+        - 'R='
+        - '_file='
+    condition: selection and filter
+  condition: 1 of them
+falsepositives:
+  - The C2 communication pattern looking for 'U=' and 'R=' or '_file=' in a URL might be generic and could trigger on legitimate applications. Further tuning by destination IP, domain, or associated process may be required.
+level: high

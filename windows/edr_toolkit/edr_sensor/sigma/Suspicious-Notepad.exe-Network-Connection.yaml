@@ -1,0 +1,27 @@
+title: Suspicious Notepad.exe Network Connection
+id: 68ffb704-e2e6-480c-a21a-aeea7e525f47
+status: experimental
+description: Detects network connections made by notepad.exe. This is highly unusual behavior, as notepad.exe is a simple text editor and should not be initiating network communications. This technique was observed in the SERPENTINE#CLOUD campaign where threat actors injected shellcode into a suspended notepad.exe process, which then established a C2 connection.
+references:
+  - https://www.securonix.com/blog/analyzing_serpentinecloud-threat-actors-abuse-cloudflare-tunnels-threat-research/
+author:
+date: 2025-07-23
+tags:
+  - attack.t1055
+  - attack.t1071.001
+logsource:
+  category: network_connection
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\notepad.exe'
+  #filter_local:
+    #DestinationIp:
+    #  - '127.0.0.1'
+    #  - '::1'
+    # The condition filters out local loopback traffic.
+    # Consider adding filters for other legitimate but noisy destinations if they appear in your environment (e.g., internal update servers).
+  condition: selection #and not filter_local
+falsepositives:
+  - Extremely low. Some third-party plugins or software that integrate with Notepad might cause it to make network connections, but this is rare. Legitimate use cases should be investigated and excluded.
+level: high

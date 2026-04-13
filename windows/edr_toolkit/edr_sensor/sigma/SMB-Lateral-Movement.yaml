@@ -1,0 +1,34 @@
+title: Remote Admin Share Connection via Net Use
+id: 1a954c79-a490-411b-b427-1705a5da4b40
+status: experimental
+description: Detects the use of `net.exe` to connect to a remote administrative share (e.g., C$, ADMIN$, IPC$). This is a common technique for lateral movement, used to stage tools or exfiltrate data. The threat actor Salt Typhoon is known to leverage SMB for lateral movement.
+references:
+author: RW
+date: 2025-07-31
+tags:
+  - attack.lateral_movement
+  - attack.t1021.002
+  - threat_group.salt_typhoon
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    # Detects the use of the 'net use' command
+    Image|endswith:
+      - '\net.exe'
+      - '\net1.exe'
+    CommandLine|contains: 'use'
+  filter_admin_share:
+    # Filters for command lines that specify a common administrative share
+    CommandLine|contains:
+      - '\ADMIN$'
+      - '\C$'
+      - '\D$'
+      - '\E$'
+      - '\IPC$'
+  condition: selection and filter_admin_share
+falsepositives:
+  - System administrators or management scripts may legitimately map administrative shares for remote maintenance or software deployment.
+  - Consider filtering based on known administrative user accounts or source hosts that are expected to perform these actions.
+level: high

@@ -1,0 +1,94 @@
+title: Suspicious Activity on VMWare ESXi Host
+id: b9564886-666b-4ff0-b86f-96ecf6bd756d
+status: experimental
+description: |
+  Detects various suspicious activities on VMWare ESXi hosts that could be precursors to a ransomware attack or indicate a system compromise.
+  This includes reconnaissance, credential manipulation, defense evasion, and data collection techniques.
+references:
+  - https://www.splunk.com/en_us/blog/security/detecting-esxi-ransomware-activity-splunk.html
+author: RW
+date: 2025-08-22
+tags:
+  - attack.discovery
+  - attack.credential_access
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.persistence
+  - attack.collection
+  - attack.t1592
+  - attack.t1078
+  - attack.t1098
+  - attack.t1543
+  - attack.t1021
+  - attack.t1567
+  - attack.t1562
+logsource:
+  product: vmware
+  service: esxi
+detection:
+  # Corresponds to system information discovery
+  selection_recon:
+    Message|contains|all:
+      - 'esxcli'
+      - 'system'
+    Message|contains:
+      - ' get'
+      - ' list'
+  # Corresponds to external root login
+  selection_root_login:
+    Message|contains|all:
+      - 'root'
+      - 'logged in'
+  # Corresponds to granting a user the admin role
+  selection_admin_grant:
+    Message|contains|all:
+      - 'esxcli system permission set'
+      - 'role Admin'
+  # Corresponds to VIB acceptance level tampering
+  selection_vib_tamper_cli:
+    Message|contains: 'esxcli software acceptance set'
+  selection_vib_tamper_update:
+    Message|contains: 'Attempting to install an image profile bypassing signing and acceptance level verification'
+  # Corresponds to SSH being enabled
+  selection_ssh_enabled:
+    Message|contains: 'SSH access has been enabled'
+  # Corresponds to modification of encryption settings
+  selection_encryption_modified:
+    Message|contains|all:
+      - 'system settings encryption set'
+    Message|contains:
+      - '--require-secure-boot'
+      - 'require-exec-installed-only'
+      - 'execInstalledOnly'
+      - ' -e '
+      - ' -s '
+  # Corresponds to VM export via a remote tool
+  selection_vm_export:
+    Message|contains|all:
+      - 'File download from path'
+      - 'was initiated from'
+  # Corresponds to audit log tampering
+  selection_audit_tamper:
+    Message|contains: 'esxcli system auditrecords'
+  # Corresponds to syslog configuration changes
+  selection_syslog_tamper_cli:
+    Message|contains|all:
+      - 'esxcli'
+      - 'syslog config set'
+  selection_syslog_tamper_key:
+    Message|contains|all:
+      - 'Set called with key'
+    Message|contains:
+      - 'Syslog.global.logHost'
+      - 'Syslog.global.logdir'
+  # Corresponds to system clock manipulation
+  selection_clock_tamper:
+    Message|contains|all:
+      - 'NTPClock'
+      - 'system clock stepped'
+  condition: 1 of selection_*
+falsepositives:
+  - Legitimate administrative activities may trigger this rule. It is recommended to investigate the context of the activity and the user performing the action.
+  - For the 'selection_root_login', consider filtering out logins from known administrative jump boxes or internal management subnets to reduce noise.
+  - The 'selection_recon' logic may be noisy in environments where administrators frequently query system state via the command line. Baseline normal activity and create exceptions for known administrative users or scripts.
+level: high

@@ -1,0 +1,46 @@
+---
+services:
+  c2-beacon-hunter:
+    build:
+      context: .
+      dockerfile: ebpf.Dockerfile
+    image: c2-beacon-hunter:v2.8
+    container_name: c2-beacon-hunter
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    network_mode: "host"
+    pid: "host"
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:rw
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+      - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
+      - ./output:/app/output:rw
+      - ./data:/app/data:rw
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - /proc:/host/proc:ro
+    environment:
+      - TEST_MODE=false
+      # wire-speed XDP dropping, dynamically writes to the eBPF map to block malicious IPs in real-time
+      - TARGET_INTERFACE=wlo1 # Set to your desired interface (e.g., eth0, wlan0, enp3s0, etc.)
+    command: /app/venv/bin/python ebpf/run_full_stack.py
+
+  api-dashboard:
+    image: python:3.12-slim
+    container_name: c2-api-dashboard
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./api_server.py:/app/api_server.py:ro
+      - ./static:/app/static:ro
+      - ./certs:/app/certs:ro
+      - ./data:/app/data:ro
+      - ./output:/app/output:ro
+    working_dir: /app
+    command: >
+      bash -c "pip install fastapi uvicorn requests &&
+      uvicorn api_server:app --host 0.0.0.0 --port 8443
+      --ssl-keyfile=/app/certs/key.pem --ssl-certfile=/app/certs/cert.pem"

@@ -1,0 +1,117 @@
+title: COLDRIVER Multi-TTP Activity (BAITSWITCH, SIMPLEFIX) - September 2025
+id: b22342d9-124d-4df7-a1c9-814619bc5c6d
+status: experimental
+description: >-
+  Detects multiple Tactics, Techniques, and Procedures (TTPs) associated with a COLDRIVER campaign active in September 2025.
+  The campaign utilizes a downloader named BAITSWITCH and a PowerShell backdoor named SIMPLEFIX.
+  This rule combines several detection opportunities into a single query, including initial execution via rundll32, persistence through logon scripts, storing payloads in the registry, C2 communications, and PowerShell-based reconnaissance.
+references:
+  - https://www.zscaler.com/blogs/security-research/coldriver-updates-arsenal-baitswitch-and-simplefix
+author: RW
+date: 2025-09-27
+tags:
+  - apt.coldriver
+  - attack.command_and_control
+  - attack.defense_evasion
+  - attack.discovery
+  - attack.execution
+  - attack.persistence
+  - attack.t1027.011
+  - attack.t1037.001
+  - attack.t1059.001
+  - attack.t1071.001
+  - attack.t1082
+  - attack.t1083
+  - attack.t1112
+  - attack.t1218.011
+logsource:
+  category:
+    - process_creation
+    - registry_set
+    - dns_query
+    - proxy
+  product: windows
+detection:
+  # Tactic 1: ClickFix rundll32.exe execution from a network share.
+  rundll_exec:
+    category: process_creation
+    Image|endswith: '\rundll32.exe'
+    # comment: Detects rundll32 loading a DLL from a network share path like \\server\share\file.dll
+    CommandLine|re: '(?i)\\\\\\[^\\]+\\[^\\]+\.dll'
+  # Tactic 2: Persistence via UserInitMprLogonScript registry key (Process Event).
+  persist_proc:
+    category: process_creation
+    Image|endswith: '\reg.exe'
+    CommandLine|contains|all:
+      - 'add'
+      - 'HKCU\Environment'
+      - '/v'
+      - 'UserInitMprLogonScript'
+  # Tactic 2: Persistence via UserInitMprLogonScript registry key (Registry Event).
+  persist_reg:
+    category: registry_set
+    TargetObject|endswith: '\Environment\UserInitMprLogonScript'
+    Details|contains: 'powershell'
+  # Tactic 3: Storing encrypted payloads in the registry (Process Event).
+  payload_proc_base:
+    category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains: '{53121F47-8C52-44A7-89A5-5595BB2B32BE}'
+  payload_proc_keywords:
+    CommandLine|contains:
+      - 'EnthusiastMode'
+      - 'QatItems'
+  # Tactic 3: Storing encrypted payloads in the registry (Registry Event).
+  payload_reg:
+    category: registry_set
+    TargetObject|contains: '\CLSID\{53121F47-8C52-44A7-89A5-5595BB2B32BE}\DefaultIcon\'
+    TargetObject|endswith:
+      - '\EnthusiastMode'
+      - '\QatItems'
+  # Tactic 4: C2 Communication with specific domains or User-Agent.
+  c2_domains:
+    - category: dns_query
+      QueryName|endswith:
+        - 'captchanom.top'
+        - 'southprovesolutions.com'
+    - category: proxy
+      Url.Domain|endswith:
+        - 'captchanom.top'
+        - 'southprovesolutions.com'
+  c2_ua:
+    category: proxy
+    UserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edge/133.0.0.0'
+  # Tactic 5: Extensive PowerShell reconnaissance.
+  recon_system:
+    category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'whoami'
+      - '/all'
+      - 'ipconfig'
+      - 'systeminfo'
+  recon_files_base:
+    category: process_creation
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'EnumerateFiles'
+      - 'EnumerateDirectories'
+  recon_files_keywords:
+    CommandLine|contains:
+      - '.pdf'
+      - '.doc'
+      - '.xls'
+  condition: >-
+    rundll_exec or
+    persist_proc or
+    persist_reg or
+    (payload_proc_base and 1 of payload_proc_keywords) or
+    payload_reg or
+    c2_domains or
+    c2_ua or
+    recon_system or
+    (recon_files_base and 1 of recon_files_keywords)
+falsepositives:
+  - Legitimate administrative scripts may perform similar reconnaissance or registry modification actions.
+  - The rundll32 execution from a network share can be legitimate in some environments. Tuning may be required based on environment specifics.
+level: high

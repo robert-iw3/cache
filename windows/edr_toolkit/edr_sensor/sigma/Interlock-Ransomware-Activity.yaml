@@ -1,0 +1,108 @@
+title: Interlock Ransomware Activity
+id: 4255f75b-db64-4e89-a971-c1d83bf99a3b
+status: experimental
+description: >-
+  This rule detects various Tactics, Techniques, and Procedures (TTPs) associated with the Interlock ransomware group (aka Nefarious Mantis).
+  It combines network, process, file, and registry events to identify initial access, execution, persistence, and C2 communication patterns.
+references:
+  - https://arcticwolf.com/resources/blog/threat-actor-profile-interlock-ransomware/
+author: RW
+date: 2025/08/23
+tags:
+  - attack.initial_access
+  - attack.execution
+  - attack.persistence
+  - attack.command_and_control
+  - attack.t1204.002
+  - attack.t1059.001
+  - attack.t1547.001
+  - attack.t1071.001
+  - attack.t1053.005
+  - threat_group.interlock
+  - ransomware.interlock
+logsource:
+  category: all
+  product: all
+detection:
+  selection_hashes:
+    - Hashes|contains:
+        - 'SHA256=2acaa9856ee58537c06cc2858fd71b860f53219504e6756faa3812019b5df5a6'
+        - 'SHA256=0b47e53f2ada0555588aa8a6a4491e14d7b2528c9a829ebb6f7e9463963cd0e4'
+        - 'SHA256=7501623230eef2f6125dcf5b5d867991bdf333d878706d77c1690b632195c3ff'
+        - 'SHA256=3e4407dfd827714a66e25c2baccefd915233eeec8fb093257e458f4153778bee'
+        - 'SHA256=fcdbe8f6204919f94fd57309806f5609ae88ae1bbd000d6226f25d2200cf6d47'
+        - 'SHA256=61d092e5c7c8200377a8bd9c10288c2766186a11153dcaa04ae9d1200db7b1c5'
+        - 'SHA256=6b72706fe0a0d2192d578e9e754d0e3f5715154a41bd18f80b32adcffad26522'
+        - 'SHA256=60d95d385e76bb83d38d713887d2fa311b4ecd9c5013882cd648afdeeb5dc7c3'
+        - 'SHA256=e40e82b77019edca06c7760b6133c6cc481d9a22585dd80bce393f0bfbe47a99'
+        - 'SHA256=0dd67fa3129acbf191eeb683fb164074cc1ba5d7bce286e0cc5ad47cc0bbcef0'
+        - 'SHA256=b28a9062100a7fbf0f65dbb23db319717c4e613e890d0a3f1ae27ec6e34cf35a'
+    - sha256:
+        - '2acaa9856ee58537c06cc2858fd71b860f53219504e6756faa3812019b5df5a6'
+        - '0b47e53f2ada0555588aa8a6a4491e14d7b2528c9a829ebb6f7e9463963cd0e4'
+        - '7501623230eef2f6125dcf5b5d867991bdf333d878706d77c1690b632195c3ff'
+        - '3e4407dfd827714a66e25c2baccefd915233eeec8fb093257e458f4153778bee'
+        - 'fcdbe8f6204919f94fd57309806f5609ae88ae1bbd000d6226f25d2200cf6d47'
+        - '61d092e5c7c8200377a8bd9c10288c2766186a11153dcaa04ae9d1200db7b1c5'
+        - '6b72706fe0a0d2192d578e9e754d0e3f5715154a41bd18f80b32adcffad26522'
+        - '60d95d385e76bb83d38d713887d2fa311b4ecd9c5013882cd648afdeeb5dc7c3'
+        - 'e40e82b77019edca06c7760b6133c6cc481d9a22585dd80bce393f0bfbe47a99'
+        - '0dd67fa3129acbf191eeb683fb164074cc1ba5d7bce286e0cc5ad47cc0bbcef0'
+        - 'b28a9062100a7fbf0f65dbb23db319717c4e613e890d0a3f1ae27ec6e34cf35a'
+  selection_powershell:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains:
+      - 'irm '
+      - 'iex '
+      - 'Invoke-RestMethod'
+      - 'Invoke-Expression'
+      - '-w h'
+      - '-windowstyle hidden'
+  selection_registry:
+    TargetObject|contains: '\Software\Microsoft\Windows\CurrentVersion\Run\'
+    TargetObject|endswith:
+      - '\ChromeUpdater'
+      - '\0neDrive'
+  selection_network:
+    DestinationIp:
+      - '168.119.96.41'
+      - '95.217.22.175'
+      - '178.156.129.27'
+      - '159.69.3.151'
+      - '128.140.120.188'
+      - '177.136.225.135'
+      - '167.235.235.151'
+      - '216.245.184.181'
+      - '5.161.225.197'
+      - '91.99.10.54'
+      - '138.199.156.22'
+      - '188.34.195.44'
+      - '45.61.136.202'
+      - '49.12.69.80'
+      - '212.237.217.182'
+      - '193.149.180.58'
+      - '192.64.86.175'
+    DestinationHostname|endswith:
+      - 'cluders.org'
+      - 'bronxy.cc'
+      - 'basiclock.cc'
+      - 'dijoin.org'
+      - 'playiro.net'
+      - 'doriot.info'
+      - 'kingrouder.tech'
+      - 'peasplecore.net'
+      - 'dashes.cc'
+      - 'nettixx.com'
+      - 'trycloudflare.com'       # Legitimate service often abused for C2
+  selection_schtasks:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+    CommandLine|contains:
+      - 'cmd'
+      - 'powershell'
+  condition: 1 of them
+falsepositives:
+  - The 'trycloudflare.com' domain is a legitimate Cloudflare service but is frequently abused by threat actors for C2 communications. Filter by specific processes or source systems if this is too noisy.
+  - Scheduled task creation is a common administrative action. Correlate with other suspicious activity or filter based on the user context or the specifics of the command line to reduce noise.
+level: high

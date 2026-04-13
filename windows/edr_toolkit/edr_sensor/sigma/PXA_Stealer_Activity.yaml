@@ -1,0 +1,85 @@
+title: PXA Stealer Infostealer Activity
+id: 2a1c8e7f-3b4d-4e9a-8f1b-9c0d7e6f5a4b
+status: test
+description: >-
+  Detects various Tactics, Techniques, and Procedures (TTPs) associated with the PXA Stealer malware campaigns.
+  This includes suspicious file creation by legitimate applications, command execution for decoding and extraction,
+  persistence via Run keys, and network connections to known malicious infrastructure.
+references:
+  - https://www.sentinelone.com/labs/ghost-in-the-zip-new-pxa-stealer-and-its-telegram-powered-ecosystem/
+author: RW
+date: 2025-08-06
+tags:
+  - attack.execution
+  - attack.persistence
+  - attack.defense_evasion
+  - attack.command_and_control
+  - attack.t1204.002
+  - attack.t1027
+  - attack.t1547.001
+  - attack.t1105
+  - malware.pxa_stealer
+logsource:
+  category:
+    - process_creation
+    - file_event
+    - registry_set
+    - dns_query
+  product: windows
+detection:
+  # TTP: Sideloaded DLL in legitimate application drops a .cmd script
+  selection_file:
+    category: file_event
+    TargetFilename|endswith: '.cmd'
+    Image|endswith:
+      - '\WINWORD.EXE'
+      - '\POWERPNT.EXE'
+      - '\EXCEL.EXE'
+    Image|contains: 'Haihaisoft' # Legitimate PDF reader used in campaigns
+  # TTP: Certutil used to decode a PDF into a RAR archive or another file
+  selection_certutil:
+    category: process_creation
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains|all:
+      - '-decode'
+      - '.pdf' # In observed attacks, a PDF file is the input for decoding
+  # TTP: Masqueraded WinRAR extracts archive to a public directory
+  selection_winrar:
+    category: process_creation
+    Image|endswith:
+      - '\WinRAR.exe'
+      - '\rar.exe'
+      - '\images.png' # WinRAR executable is renamed to images.png in this campaign
+    CommandLine|contains:
+      - ' x ' # Extract command with full paths
+      - ' e ' # Extract command
+    CommandLine|contains:
+      - 'C:\Users\Public'
+      - 'C:/Users/Public'
+  filter_winrar:
+    Image|startswith:
+      - 'C:\Program Files\'
+      - 'C:\Program Files (x86)\'
+  # TTP: Persistence via Run key to launch payload from C:\Users\Public
+  selection_persist:
+    category: registry_set
+    TargetObject|endswith: '\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    Details|contains|all:
+      - 'cmd'
+      - '/c'
+      - 'start'
+      - 'C:\Users\Public\'
+      - 'svchost.exe' # Renamed Python interpreter
+  # IOC: Network connection to known C2/payload domains
+  selection_network:
+    category: dns_query
+    QueryName|endswith:
+      - 'paste.rs'
+      - '0x0.st'
+      - 'lp2tpju9yrz2fklj.lone-none-1807.workers.dev'
+  condition: selection_file or selection_certutil or (selection_winrar and not filter_winrar) or selection_persist or selection_network
+falsepositives:
+  - The domains `paste.rs` and `0x0.st` are legitimate file-sharing services that can be abused. Traffic to these may be benign.
+  - Legitimate software or administrative scripts may use `certutil.exe` to decode files, create `.cmd` files, or use `WinRAR` to extract to public directories.
+  - If false positives occur, consider tuning the rule by adding more specific parent processes, user contexts, or command-line arguments known to be benign in your environment.
+level: high

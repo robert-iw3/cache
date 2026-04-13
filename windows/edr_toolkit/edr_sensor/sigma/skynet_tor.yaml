@@ -1,0 +1,32 @@
+title: Skynet Malware Tor Client Execution
+id: 11e7b3c9-d2a1-4e5f-8b6c-7a9d0e1f2g3h
+status: experimental
+description: >-
+  Detects the execution of the Skynet malware's embedded Tor client from the
+  temporary directory with specific command-line arguments, as described by
+  Check Point Research.
+author:
+date: 2025-06-27
+logsource:
+  category: process_creation
+  product: windows
+  service: security
+detection:
+  selection:
+    Image|contains: \Temp\skynet\tor.exe
+    CommandLine|contains:
+      - '--ControlPort 127.0.0.1:24616'
+      - '--SocksPort 127.0.0.1:24615'
+      - '--Log "notice stdout"'
+  condition: selection
+falsepositives:
+  - >-
+    Legitimate Tor usage (unlikely with these specific paths and ports in a temp
+    directory)
+level: high
+references:
+  - https://research.checkpoint.com/2025/ai-evasion-prompt-injection/
+tags:
+  - attack.command_and_control
+  - attack.t1090.003
+  - malware.skynet

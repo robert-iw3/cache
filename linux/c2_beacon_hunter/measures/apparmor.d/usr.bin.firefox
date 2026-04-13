@@ -1,0 +1,31 @@
+# /etc/apparmor.d/usr.bin.firefox
+#include <tunables/global>
+
+profile firefox /usr/bin/firefox {
+  #include <abstractions/base>
+  #include <abstractions/consoles>
+  #include <abstractions/audio>
+  #include <abstractions/dbus-session>
+
+  # Allow basic network (but restrict if possible)
+  network inet,
+  network inet6,
+
+  # Allow reading common directories
+  /usr/** r,
+  /etc/** r,
+  /opt/** r,
+
+  # Allow writing to user directories only
+  owner @{HOME}/** rw,
+
+  # Deny dangerous execution
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/python* x,
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+
+  # Logging
+  audit deny /** w,
+}

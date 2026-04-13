@@ -1,0 +1,57 @@
+title: Laundry Bear Related Typosquatted Domains
+id: 0b2c5b1d-8c55-4832-b409-a211f4419ab1
+status: experimental
+description: Detects DNS queries for domains associated with the Laundry Bear (Void Blizzard)
+  APT group's phishing campaigns. These domains are often typosquats of legitimate services
+  and were identified through infrastructure analysis.
+author: RW
+date: 2025-07-28
+tags:
+  - apt.laundry_bear
+  - apt.void_blizzard
+  - attack.initial_access
+  - attack.t1566.002
+logsource:
+  category: dns
+  product: zeek
+detection:
+  selection:
+    # DNS queries for known Laundry Bear typosquatted domains
+    dns.query|endswith:
+      - 'aoc-gov.us'
+      - 'app-v4-mybos.com'
+      - 'avsgroup.au'
+      - 'bidscale.net'
+      - 'defraudatubanco.com'
+      - 'deloittesharepoint.com'
+      - 'ebsum.eu'
+      - 'ebsumlts.eu'
+      - 'ebsummlt.eu'
+      - 'ebsummt.eu'
+      - 'ebsumrnit.eu'
+      - 'ebsurnmit.eu'
+      - 'enticator-secure.com'
+      - 'it-sharepoint.com'
+      - 'm-365-app.com'
+      - 'mail-forgot.com'
+      - 'maidservant.shop'
+      - 'max-linear.com'
+      - 'microffice.org'
+      - 'micsrosoftonline.com'
+      - 'miscrsosoft.com'
+      - 'myspringbank.com'
+      - 'ourbelovedsainscore.space'
+      - 'portal-microsoftonline.com'
+      - 'propescom.com'
+      - 'redronesolutions.cloud'
+      - 'refundes.net'
+      - 'remerelli.com'
+      - 'spidergov.org'
+      - 'teamsupportonline.top'
+      - 'weblogmail.live'
+      - 'x9a7lm02kqaccountprotectionaccountsecuritynoreply.com'
+  condition: selection
+falsepositives:
+  # These domains have been directly linked to malicious activity. However, they could be sinkholed by security researchers over time.
+  - Legitimate access to any of these domains if they have been repurposed for non-malicious use.
+level: high

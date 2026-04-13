@@ -1,0 +1,44 @@
+title: CL-CRI-1040 Ransomware and Sideloading Activity
+id: b1446ffe-f1d7-46da-9f02-33d2b3139604
+status: experimental
+description: Detects multiple techniques used by CL-CRI-1040/Storm-2603, including the creation of AK47/X2ANYLOCK ransomware files and DLL side-loading for payload deployment using legitimate executables like 7z.exe or clink_x86.exe.
+references:
+  - https://unit42.paloaltonetworks.com/ak47-activity-linked-to-sharepoint-vulnerabilities/
+author: RW
+date: 2025-08-06
+tags:
+  - attack.impact
+  - attack.defense_evasion
+  - attack.t1486
+  - attack.t1574.001
+  - malware.ak47
+  - malware.x2anylock
+  - threat_actor.cl_cri_1040
+  - threat_actor.storm_2603
+logsource:
+  product: windows
+  service: security
+detection:
+  # Part 1: Detects AK47/X2ANYLOCK ransomware file creation
+  selection_ransomware:
+    TargetFilename|endswith: '.x2anylock'
+  # Part 2: Detects specific DLL side-loading TTP
+  selection_sideload_7z:
+    Image|endswith: '\7z.exe'
+    ImageLoaded|endswith: '\7z.dll'
+  selection_sideload_clink:
+    Image|endswith: '\clink_x86.exe'
+    ImageLoaded|endswith: '\clink_dll_x86.dll'
+  # FP Filter for the side-loading part
+  filter_sideload:
+    ImageLoaded|startswith:
+      - 'C:\Program Files\7-Zip\'
+      - 'C:\Program Files (x86)\7-Zip\'
+      - 'C:\Program Files\clink\'
+      - 'C:\Program Files (x86)\clink\'
+  condition: selection_ransomware or ((1 of selection_sideload_*) and not filter_sideload)
+falsepositives:
+  - This rule combines two distinct detection patterns.
+  - For the ransomware detection, false positives are highly unlikely.
+  - For the DLL side-loading part, legitimate versions of 7-Zip or Clink installed in non-standard directories could cause false positives. Additional tuning of the filter paths may be required.
+level: critical

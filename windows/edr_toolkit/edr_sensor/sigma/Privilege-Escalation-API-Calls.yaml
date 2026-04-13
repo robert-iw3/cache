@@ -1,0 +1,51 @@
+title: Privilege Escalation via AdjustTokenPrivileges API Call
+id: 95f0971e-4614-46cf-bd4a-36e4490d7fd4
+status: experimental
+description: Detects attempts to enable sensitive privileges using the AdjustTokenPrivileges API call. This is a common technique used by malware and post-exploitation frameworks like Cobalt Strike to gain higher-level permissions, such as debugging rights (SeDebugPrivilege), to access protected processes like LSASS.
+references:
+author: RW
+date: 2025-08-06
+tags:
+  - attack.t1134
+  - attack.privilege_escalation
+logsource:
+  product: windows
+  category: api_call   # This is a generic category for EDR logs that monitor API calls. Field names may vary.
+detection:
+  selection_api:
+        # Medium comment: This may be 'CallTrace' or 'Function' depending on the EDR or logging tool.
+    ApiCall: 'AdjustTokenPrivileges'
+  selection_privileges:
+        # Medium comment: These are sensitive privileges commonly abused by attackers for process access, injection, and credential dumping.
+    PrivilegeName:
+      - 'SeDebugPrivilege'
+      - 'SeImpersonatePrivilege'
+      - 'SeAssignPrimaryTokenPrivilege'
+      - 'SeLoadDriverPrivilege'
+      - 'SeBackupPrivilege'
+      - 'SeRestorePrivilege'
+      - 'SeCreateTokenPrivilege'
+      - 'SeTcbPrivilege'
+      - 'SeTakeOwnershipPrivilege'
+  filter_legit:
+        # Medium comment: Filter for legitimate processes known to require these privileges. This list should be tuned for the environment.
+    Image|endswith:
+      - '\lsass.exe'
+      - '\winlogon.exe'
+      - '\csrss.exe'
+      - '\services.exe'
+      - '\svchost.exe'
+      - '\MsMpEng.exe'             # Microsoft Defender
+      - '\NisSrv.exe'             # Microsoft Network Realtime Inspection Service
+      - '\devenv.exe'             # Visual Studio
+      - '\windbg.exe'
+      - '\procmon.exe'
+      - '\procexp.exe'
+      - '\procexp64.exe'
+  condition: selection_api and selection_privileges and not filter_legit
+falsepositives:
+  - Legitimate security software (AV, EDR) and system monitoring tools not included in the filter.
+  - Backup software using SeBackupPrivilege or SeRestorePrivilege.
+  - Debuggers and development environments like Visual Studio.
+  - System processes during normal operations.
+level: high

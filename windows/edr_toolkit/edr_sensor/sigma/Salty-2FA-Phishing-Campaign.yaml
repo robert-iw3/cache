@@ -1,0 +1,49 @@
+title: Salty 2FA Phishing Kit Detection
+id: 73e91bc0-d601-42ef-9e91-280a0de88ae6
+status: experimental
+description: >-
+  Detects various web-based indicators of the Salty 2FA phishing kit.
+  This rule identifies the unique landing page domain structure, Cloudflare evasion, anti-analysis techniques, and the specific data exfiltration pattern.
+references:
+  - https://any.run/cybersecurity-blog/salty2fa-technical-analysis/
+author: RW
+date: 2025-08-20
+tags:
+  - attack.initial_access
+  - attack.t1566
+  - attack.exfiltration
+  - attack.t1041
+  - attack.defense_evasion
+  - attack.t1622
+  - threat_actor.storm-1575
+  - phishing.salty_2fa
+logsource:
+  category: web
+detection:
+  selection_landing_domain:
+    # Detects the unique domain pattern where a two-letter country code is a subdomain of a .com domain
+    url.domain|re: '.*\.[a-z]{2}\.com$'
+  selection_landing_content:
+    # Detects content indicative of a Microsoft-themed phishing page using Cloudflare Turnstile
+    http.response.body.content|contains|all:
+      - 'challenges.cloudflare.com/turnstile/'
+      - 'Microsoft'
+      - 'Sign in'
+  selection_anti_analysis:
+    # Detects a JavaScript anti-debugging technique used by the kit
+    http.response.body.content|contains|all:
+      - 'new Date()'
+      - 'debugger'
+  selection_exfil:
+    # Detects the specific data exfiltration pattern
+    http.method: 'POST'
+    url.domain|endswith: '.ru'
+    url.path|re: '/\d{5,6}\.php$'
+    http.request.body.content|contains|all:
+      - 'request='
+      - 'session='
+  condition: selection_exfil or (selection_landing_domain and (selection_landing_content or selection_anti_analysis))
+falsepositives:
+  - The data exfiltration pattern (`selection_exfil`) is highly specific and has a low probability of false positives.
+  - The landing page detection may trigger on legitimate services that use a similar domain structure and integrate both Cloudflare and Microsoft authentication, although the combination of indicators reduces this risk.
+level: high

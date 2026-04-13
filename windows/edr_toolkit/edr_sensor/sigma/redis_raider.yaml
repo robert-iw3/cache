@@ -1,0 +1,31 @@
+title: RedisRaider Cron Persistence Attempt
+id: 8f1b2c3d-4e5f-5a6b-7c8d-9e0f1a2b3c4d
+version: 1.0
+date: 2025-05-14
+author:
+description: Detects attempts by the RedisRaider malware to establish persistence via cron jobs by modifying Redis configuration to write the database to /etc/cron.d. This technique involves setting the 'dir' and 'dbfilename' configuration parameters to target a cron directory and file, followed by a BGSAVE command.
+references:
+  - https://securitylabs.datadoghq.com/articles/redisraider-weaponizing-misconfigured-redis/
+logsource:
+  product: redis
+  service: redis
+detection:
+  selection_dir:
+    # Look for CONFIG SET dir command targeting a common cron directory
+    command|contains: 'CONFIG SET dir "/etc/cron.d"'
+    # Add other potential cron directories if relevant logging is available, e.g., '/var/spool/cron/crontabs'
+  selection_dbfilename:
+    # Look for CONFIG SET dbfilename command with the filename used by RedisRaider
+    command|contains: 'CONFIG SET dbfilename "apache"'
+    # Add other suspicious filenames if observed in other campaigns using this technique
+  selection_bgsave:
+    # Look for the BGSAVE command which writes the database to the configured path
+    command|contains: 'BGSAVE'
+  condition: all of selection_*
+falsepositives:
+  - Legitimate administrative tasks involving CONFIG SET dir/dbfilename (highly unlikely to target /etc/cron.d)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1053.003 # Cron
+  - attack.t1005 # Data from Local System (dumping RDB)

@@ -1,0 +1,40 @@
+title: Suspicious Remote Access Tool Execution
+id: 2670d542-7be9-40a5-be07-aee2665bb1d6
+status: experimental
+description: Detects the execution of legitimate remote access tools that are often abused by threat actors like Scattered Spider (UNC3944, Oktapus) for initial access, persistence, and lateral movement.
+references:
+  - https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
+author: RW
+date: 2025-07-31
+tags:
+  - attack.t1219
+  - attack.command_and_control
+  - group.scattered_spider
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+        # Lists legitimate remote access tools abused by Scattered Spider
+    Image|endswith:
+      - '\AnyDesk.exe'
+      - '\TeamViewer.exe'
+      - '\TeamViewer_Service.exe'
+      - '\Splashtop Streamer.exe'
+      - '\ScreenConnect.Client.exe'
+      - '\ScreenConnect.ClientService.exe'
+      - '\Pulseway.exe'
+      - '\PCMonitor.Service.exe'
+      - '\level-agent.exe'
+      - '\fleetdeck-agent.exe'
+      - '\ngrok.exe'
+      - '\tacticalrmm.exe'
+      - '\tailscale.exe'
+      - '\tailscaled.exe'
+      - '\tsh.exe'
+      - '\teleport.exe'
+  condition: selection
+falsepositives:
+  - These tools are legitimate and may be used by IT administrators, help desk staff, or external support vendors.
+  - To reduce false positives, filter for executions by non-administrative users or from parent processes that are not part of an approved software deployment or management tool. Consider creating an allowlist of authorized user accounts or groups.
+level: medium

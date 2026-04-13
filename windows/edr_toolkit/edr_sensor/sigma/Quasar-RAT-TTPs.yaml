@@ -1,0 +1,123 @@
+title: Quasar RAT Associated TTPs
+id: 496218e6-882b-4979-9dba-90a096a3dde8
+status: experimental
+description: >-
+  Detects a combination of indicators and behaviors associated with Quasar RAT, as detailed in a Splunk Threat Research Team blog post.
+  This rule provides broad coverage by looking for specific process executions, file modifications, and network reconnaissance patterns characteristic of this malware.
+references:
+  - https://www.splunk.com/en_us/blog/security/image-steganography-quasar-rat-detection.html
+author: RW
+date: 2025-08-22
+tags:
+  - attack.credential_access
+  - attack.defense_evasion
+  - attack.discovery
+  - attack.execution
+  - attack.impact
+  - attack.persistence
+  - attack.t1053.005
+  - attack.t1082
+  - attack.t1529
+  - attack.t1547.001
+  - attack.t1552.001
+  - attack.t1553.005
+  - malware.quasar
+detection:
+  selection_hash:
+    logsource:
+      category: process_creation
+      product: windows
+        # IOC from the report for the .NET Steganography Loader
+    Hashes|contains: 'SHA256=7300535ef26158bdb916366b717390fc36eb570473ed7805c18b101367c68af5'
+  selection_schtasks:
+    logsource:
+      category: process_creation
+      product: windows
+        # Detects scheduled task creation with highest privileges for persistence/privilege escalation
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - '/rl'
+      - 'HIGHEST'
+  selection_shutdown:
+    logsource:
+      category: process_creation
+      product: windows
+        # Detects immediate system shutdown or reboot commands
+    Image|endswith: '\shutdown.exe'
+    CommandLine|contains:
+      - ' /s /t 0'
+      - ' /r /t 0'
+  selection_filezilla:
+    logsource:
+      category: file_event
+      product: windows
+        # Detects access to FileZilla configuration files to steal credentials
+    TargetFilename|contains:
+      - '\FileZilla\recentservers.xml'
+      - '\FileZilla\sitemanager.xml'
+  filter_filezilla:
+    Image|endswith:
+      - '\filezilla.exe'
+      - '\OneDrive.exe'
+  selection_startup:
+    logsource:
+      category: file_creation
+      product: windows
+        # Detects creation of a .url shortcut in the Startup folder for persistence
+    TargetFilename|contains|all:
+      - '\Start Menu\Programs\Startup\'
+      - '.url'
+  selection_motw:
+    logsource:
+      category: file_delete
+      product: windows
+        # Detects deletion of the Mark-of-the-Web to bypass security warnings
+    TargetFilename|endswith: ':Zone.Identifier'
+  selection_dns:
+    logsource:
+      category: dns_query
+        # Detects DNS queries to common IP checking services for reconnaissance
+    QueryName|contains:
+      - 'wtfismyip.com'
+      - 'checkip.'
+      - 'ipecho.net'
+      - 'ipinfo.io'
+      - 'api.ipify.org'
+      - 'icanhazip.com'
+      - 'ip.anysrc.com'
+      - 'api.ip.sb'
+      - 'ident.me'
+      - 'myexternalip.com'
+      - 'zen.spamhaus.org'
+      - 'cbl.abuseat.org'
+      - 'b.barracudacentral.org'
+      - 'dnsbl-1.uceprotect.net'
+      - 'spam.dnsbl.sorbs.net'
+      - 'iplogger.org'
+      - 'ip-api.com'
+      - 'geoip.'
+      - 'ipwho.is'
+      - 'ifconfig.me'
+      - 'myip.com'
+      - 'ipstack.com'
+      - 'ip-api.io'
+      - 'trackip.net'
+      - 'ipgeolocation.io'
+      - 'ipfind.io'
+      - 'freegeoip.app'
+      - 'ipv4bot.whatismyipaddress.com'
+      - 'hacker-target.com/iptools'
+  condition: >
+    selection_hash or
+    selection_schtasks or
+    selection_shutdown or
+    (selection_filezilla and not filter_filezilla) or
+    selection_startup or
+    selection_motw or
+    selection_dns
+falsepositives:
+  - The logic for FileZilla access may be prone to false positives if legitimate backup tools or scripts in the environment interact with these files. Consider adding more specific process names to the exclusion list.
+  - The DNS query portion may trigger on legitimate admin tools or user activity. Consider filtering by process name for known browsers or scripting engines if noise is high.
+  - Scheduled tasks created with highest privileges can be legitimate administrative activity.
+level: high

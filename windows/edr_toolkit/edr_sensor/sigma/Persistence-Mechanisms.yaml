@@ -1,0 +1,31 @@
+title: CRYSTALRAY Persistence via Systemd Service
+id: 049ef6d5-e317-4be2-8749-1bb985b87590
+status: experimental
+description: Detects the creation or execution of persistence mechanisms, such as the `hostctld` or `log_rotate` binaries, which are subsequently enabled as systemd services. This technique is used by the CRYSTALRAY threat actor to maintain access to compromised systems.
+references:
+  - https://www.sysdig.com/blog/crystalray-rising-threat-actor-exploiting-oss-tools
+author: RW
+date: 2025-08-07
+tags:
+  - attack.persistence
+  - attack.t1543.002
+  - threat_actor.crystalray
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  bin_exec:
+    Image|endswith:
+      - '/hostctld' # Sliver C2 implant used by CRYSTALRAY
+      - '/log_rotate' # Note the underscore, distinguishing it from the legitimate 'logrotate' binary. Used for a cryptominer persisted as a service.
+  svc_creation:
+    Image|endswith: '/systemctl' # Detects the use of systemctl to manage services
+    CommandLine|contains:
+      - 'enable hostctld.service' # Enables the service on boot
+      - 'start hostctld.service' # Starts the service immediately
+      - 'enable log_rotate.service'
+      - 'start log_rotate.service'
+  condition: 1 of them
+falsepositives:
+  - The binary name `hostctld` is highly specific. The name `log_rotate` with an underscore is also unlikely to be a legitimate system binary (the legitimate tool is typically `/usr/sbin/logrotate`). False positives are expected to be very low.
+level: high

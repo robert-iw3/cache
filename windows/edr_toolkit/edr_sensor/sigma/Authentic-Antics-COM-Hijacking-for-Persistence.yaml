@@ -1,0 +1,27 @@
+title: AUTHENTIC ANTICS COM Hijacking Persistence
+id: 2bab6a92-d3e4-459b-a0e2-3af3210ce769
+status: experimental
+description: Detects COM hijacking used by AUTHENTIC ANTICS for persistence. The malware modifies the InprocServer32 key for the CLSID {1299CF18-C4F5-4B6A-BB0F-2299F0398E27}, which is normally associated with Outlook's `npmproxy.dll`, to point to its own malicious loader.
+references:
+  - https://www.ncsc.gov.uk/static-assets/documents/malware-analysis-reports/authentic-antics/ncsc-mar-authentic_antics.pdf
+author: Rob Weber
+date: 2025-07-26
+tags:
+  - attack.persistence
+  - attack.t1546.015
+  - malware.authentic_antics
+logsource:
+  product: windows
+  category: registry_set
+detection:
+  selection:
+        # This CLSID is associated with Outlook and is hijacked by the malware for persistence.
+    TargetObject|endswith: '\SOFTWARE\Classes\CLSID\{1299CF18-C4F5-4B6A-BB0F-2299F0398E27}\InprocServer32'
+  filter:
+        # The legitimate DLL for this COM object is 'npmproxy.dll'.
+        # The field name for the registry value data might vary (e.g., 'Details', 'TargetValue').
+    Details|endswith: 'npmproxy.dll'
+  condition: selection and not filter
+falsepositives:
+  - Legitimate software updates or repairs to Outlook could potentially modify this key, but are unlikely to change it to a different DLL.
+level: high

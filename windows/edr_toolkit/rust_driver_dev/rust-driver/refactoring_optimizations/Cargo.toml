@@ -1,0 +1,33 @@
+[package]
+name = "endpoint_monitor_driver"
+version = "0.6.0"
+edition = "2021"
+
+[package.metadata.wdk.driver-model]
+driver-type = "WDM"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wdk = "0.5.1"
+wdk-sys = "0.5.1"
+wdk-alloc = "0.5.1"
+wdk-panic = "0.5.1"
+
+[features]
+default = ["registry", "threads", "objects", "ai_agent"]
+registry = []
+network = []
+ai_agent = []
+threads = []
+objects = []
+memory = []
+power = []
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

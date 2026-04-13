@@ -1,0 +1,34 @@
+title: RAR for Data Staging
+id: 113e5b8e-d75c-466e-a386-a3937c88e9e3
+status: experimental
+description: Detects the use of rar.exe to compress sensitive data before exfiltration, often in public or temporary directories. This is a known TTP of the threat actor Salt Typhoon.
+references:
+author: RW
+date: 2025-07-31
+tags:
+  - attack.collection
+  - attack.t1005
+  - attack.t1074.001
+  - threat_group.salt_typhoon
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_process:
+        # Detects the execution of the rar command-line utility.
+    Image|endswith: '\rar.exe'
+        # The 'a' command is used to add files to an archive.
+    CommandLine|contains: ' a '
+  selection_path:
+        # Looks for output paths pointing to common staging directories.
+    CommandLine|contains:
+      - 'C:\Users\Public\'
+      - 'C:\ProgramData\'
+      - 'C:\Windows\Temp\'
+      - 'C:\PerfLogs\'
+      - '\AppData\Local\Temp'
+  condition: selection_process and selection_path
+falsepositives:
+  - Legitimate use of the rar.exe command-line tool by users or administrators to archive files into these locations, although this is uncommon.
+  - Consider filtering based on user context or parent processes if legitimate scripting uses this behavior.
+level: medium

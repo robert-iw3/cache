@@ -1,0 +1,105 @@
+title: APT28 NotDoor Backdoor Activity
+id: ce3c86cc-f58f-4c67-b5c1-58d21d8eac83
+status: experimental
+description: >-
+  Detects various activities associated with the NotDoor backdoor, used by APT28.
+  It looks for specific file creation events, process command lines, registry modifications, and network communications.
+author: RW
+date: 2025-09-03
+tags:
+  - attack.persistence
+  - attack.execution
+  - attack.defense_evasion
+  - attack.exfiltration
+  - attack.command_and_control
+  - attack.t1547.001
+  - attack.t1137.006
+  - attack.t1059.001
+  - attack.t1112
+  - attack.t1071
+  - threat_group.apt28
+logsource:
+  - category: file_event
+    product: windows
+  - category: process_creation
+    product: windows
+  - category: registry_set
+    product: windows
+  - category: network_connection
+    product: windows
+  - category: email
+detection:
+    # File Events - Hashes and initial drop
+  selection_file_hash:
+    - sha256:
+        - '5a88a15a1d764e635462f78a0cd958b17e6d22c716740febc114a408eef66705'        # SSPICLI.dll
+        - '8f4bca3c62268fff0458322d111a511e0bcfba255d5ab78c45973bd293379901'        # testtemp.ini
+  selection_file_path:
+    TargetFilename: 'c:\programdata\testtemp.ini'
+    # Staging file creation in %TEMP%\Test
+  selection_file_staging:
+    TargetFilename|contains|all:
+      - '\AppData\Local\Temp\Test\'
+      - '_'
+    TargetFilename|endswith:
+      - '.jpg'
+      - '.jpeg'
+      - '.gif'
+      - '.bmp'
+      - '.ico'
+      - '.png'
+      - '.pdf'
+      - '.doc'
+      - '.docx'
+      - '.xls'
+      - '.xlsx'
+      - '.ppt'
+      - '.pptx'
+      - '.mp3'
+      - '.mp4'
+      - '.xml'
+
+    # Process Creation - PowerShell activity
+  selection_proc_copy:
+    CommandLine|contains|all:
+      - 'copy'
+      - 'c:\programdata\testtemp.ini'
+      - '\Microsoft\Outlook\VbaProject.OTM'
+  selection_proc_nslookup:
+    CommandLine|contains|all:
+      - 'nslookup'
+      - '.dnshook.site'
+  selection_proc_curl:
+    CommandLine|contains|all:
+      - 'curl'
+      - 'webhook.site'
+
+    # Registry Events - Outlook macro and warning modifications
+  selection_reg_boot:
+    TargetObject|endswith: '\Software\Microsoft\Office\16.0\Outlook\LoadMacroProviderOnBoot'
+    Details: '1'
+  selection_reg_security:
+    TargetObject|endswith: '\Software\Microsoft\Office\16.0\Outlook\Security\Level'
+    Details: '1'
+  selection_reg_options:
+    TargetObject|endswith: '\Software\Microsoft\Office\16.0\Outlook\Options\General\PONT_STRING'
+    Details: ';'
+
+    # Network Events - C2 communication
+  selection_net_c2:
+    DestinationHostname|contains:
+      - 'webhook.site'
+      - 'dnshook.site'
+
+    # Email Events - Exfiltration
+  selection_email_exfil:
+    Destination: 'a.matti444@proton.me'
+    Subject|contains: 'Re: 0'
+
+  condition: 1 of them
+falsepositives:
+    # Setting the macro security Level to 1 (Enable all) is highly suspicious but may be used by administrators in some cases.
+  - Legitimate use of webhook.site or dnshook.site for development or testing purposes may occur.
+    # The staging file detection is based on a generic path and file naming convention which could overlap with legitimate application behavior.
+  - Correlate with other activity if any of these selections are too noisy.
+level: high

@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: C2_NDR_Postgres
+    type: postgres
+    url: postgres:5432
+    database: c2_beacon_hunter
+    user: postgres
+    # Use the same password defined in your secrets/postgres_password.txt
+    secureJsonData:
+      password: "your_strong_password_here"
+    jsonData:
+      sslmode: "disable" # Internal docker network
+      postgresVersion: 1600
+      timescaledb: false

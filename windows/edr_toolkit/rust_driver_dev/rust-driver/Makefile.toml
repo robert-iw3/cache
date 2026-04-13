@@ -1,0 +1,8 @@
+extend = "target/rust-driver-makefile.toml"
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--release", "--features=registry,network,threads,objects"]
+
+[tasks.default]
+alias = "build"

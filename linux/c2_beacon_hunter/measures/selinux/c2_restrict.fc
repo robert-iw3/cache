@@ -1,0 +1,26 @@
+# =============================================================================
+# c2_restrict.fc - File context definitions
+# Maps binaries to restricted domains
+# =============================================================================
+
+# Curl
+/usr/bin/curl            --  gen_context(system_u:object_r:c2_curl_exec_t,s0)
+
+/usr/bin/wget            --  gen_context(system_u:object_r:c2_wget_exec_t,s0)
+
+/usr/bin/socat           --  gen_context(system_u:object_r:c2_socat_exec_t,s0)
+/usr/bin/nc              --  gen_context(system_u:object_r:c2_nc_exec_t,s0)
+/usr/bin/netcat          --  gen_context(system_u:object_r:c2_nc_exec_t,s0)
+
+/usr/bin/openssl         --  gen_context(system_u:object_r:c2_openssl_exec_t,s0)
+
+/usr/bin/python3*        --  gen_context(system_u:object_r:c2_python_exec_t,s0)
+/usr/bin/python          --  gen_context(system_u:object_r:c2_python_exec_t,s0)
+
+/usr/bin/bash            --  gen_context(system_u:object_r:c2_bash_exec_t,s0)
+
+/usr/bin/ssh             --  gen_context(system_u:object_r:c2_ssh_exec_t,s0)
+
+/usr/bin/perl            --  gen_context(system_u:object_r:c2_perl_exec_t,s0)
+
+/usr/bin/ruby*           --  gen_context(system_u:object_r:c2_ruby_exec_t,s0)

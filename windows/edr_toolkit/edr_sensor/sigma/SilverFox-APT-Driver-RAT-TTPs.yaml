@@ -1,0 +1,85 @@
+title: Silver Fox APT Multi-Stage Activity
+id: 81689276-1a63-4563-879a-9642d5e6b5bc
+status: experimental
+description: Detects a combination of TTPs associated with the Silver Fox APT group. This rule correlates persistence mechanisms, vulnerable driver abuse for defense evasion, and C2 communications related to the ValleyRAT backdoor deployment.
+references:
+  - https://research.checkpoint.com/2025/silver-fox-apt-vulnerable-drivers/
+author: RW
+date: 2025-08-30
+tags:
+  - attack.persistence
+  - attack.defense_evasion
+  - attack.command_and_control
+  - attack.t1543.003
+  - attack.t1562.001
+  - attack.t1071.001
+  - apt.silver_fox
+  - malware.valleyrat
+logsource:
+  - category: file_event
+    product: windows
+  - category: service_creation
+    product: windows
+  - category: image_load
+    product: windows
+  - category: driver_operation   # Note: This is a placeholder category for DeviceIoControl events.
+    product: windows
+  - category: network_connection
+    product: windows
+detection:
+    # Key indicator: Loading of known vulnerable drivers by hash
+  selection_driver:
+    category: image_load
+    Hashes|contains:
+      - 'SHA256=12b3d8bc5cc1ea6e2acd741d8a80f56cf2a0a7ebfa0998e3f0743fcf83fabb9e'        # amsdk.sys v1.0.600
+      - 'SHA256=0be8483c2ea42f1ce4c90e84ac474a4e7017bc6d682e06f96dc1e31922a07b10'        # wamsdk.sys v1.1.100 (modified)
+      - 'SHA256=9c394dcab9f711e2bf585edf0d22d2210843885917d409ee56f22a4c24ad225e'        # ZAM.exe v3.0.0.000
+
+    # Corroborating indicator: Persistence via file creation in a suspicious folder
+  selection_file:
+    category: file_event
+    TargetFilename|endswith:
+      - '\Program Files\RunTime\RuntimeBroker.exe'
+      - '\Program Files\RunTime\Amsdk_Service.sys'
+
+    # Corroborating indicator: Persistence via suspicious service creation
+  selection_service:
+    category: service_creation
+    ServiceName:
+      - 'Termaintor'
+      - 'Amsdk_Service'
+
+    # Corroborating indicator: Communication with vulnerable driver to terminate processes
+  selection_ioctl:
+    category: driver_operation     # Note: Fields for this category may need to be adapted for your specific EDR.
+    TargetObject|contains: 'amsdk'     # The device name created by the driver
+    Details|contains:     # Generic field for IOCTL codes
+      - '0x80002010'       # IOCTL_REGISTER_PROCESS
+      - '0x80002048'       # IOCTL_TERMINATE_PROCESS
+
+    # Corroborating indicator: C2 communication to known ValleyRAT servers
+  selection_c2:
+    category: network_connection
+    DestinationIp:
+      - '47.239.197.97'
+      - '8.217.38.238'
+      - '156.234.58.194'
+      - '156.241.144.66'
+      - '1.13.249.217'
+    DestinationPort:
+      - 52116
+      - 52117
+      - 8888
+      - 52110
+      - 52111
+      - 52139
+      - 52160
+      - 9527
+      - 9528
+
+  timeframe: 24h
+  condition: selection_driver and 1 of (selection_file, selection_service, selection_ioctl, selection_c2)
+
+falsepositives:
+  - Legitimate installations or use of WatchDog Antimalware might trigger parts of this rule (e.g., `Amsdk_Service` creation). However, the correlation with the specific vulnerable driver hash and at least one other suspicious activity significantly reduces the likelihood of false positives.
+level: high

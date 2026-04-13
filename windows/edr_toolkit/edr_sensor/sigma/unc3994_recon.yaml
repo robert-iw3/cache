@@ -1,0 +1,39 @@
+title: UNC3944 (Scattered Spider) Reconnaissance Tool Execution
+id: 50211111-2222-3333-4444-555555555555
+description: Detects the execution of Active Directory reconnaissance tools (ADRecon, ADExplorer, SharpHound) commonly used by UNC3944 (Scattered Spider) actors during internal reconnaissance phases.
+author:
+date: 2025/05/07
+references:
+    - https://cloud.google.com/blog/topics/threat-intelligence/defending-against-unc3944
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_adexplorer:
+        Image|endswith: '\ADExplorer.exe'
+    selection_sharphound_exe:
+        Image|endswith: '\SharpHound.exe'
+    selection_sharphound_ps:
+        Image|endswith: '\powershell.exe'
+        CommandLine|contains: 'Invoke-SharpHound' # Covers both .ps1 and direct command execution
+    condition: 1 of selection_*
+falsepositives:
+    - Legitimate penetration testing or red team activities
+    - System administrators performing legitimate reconnaissance (should be rare with these specific tools)
+level: high
+tags:
+    - attack.discovery
+    - attack.t1087 # Account Discovery
+    - attack.t1069 # Permission Groups Discovery
+    - attack.t1482 # Domain Trust Discovery
+    - attack.t1018 # Remote System Discovery
+    - attack.t1049 # System Network Connections Discovery
+    - attack.t1589 # Gather Victim Identity Information
+    - attack.t1590 # Gather Victim Information
+    - attack.t1592 # Gather Victim Org Information
+    - attack.t1598 # Spearphishing Link
+    - attack.t1595 # Active Scanning
+    - attack.t1596 # Gather Victim Network Information
+    - attack.t1597 # Gather Victim Host Information
+    - detection.emerging_threats
+    - detection.threat_actor.unc3944

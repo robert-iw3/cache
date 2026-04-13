@@ -1,0 +1,145 @@
+title: GRU Unit 29155 (Ember Bear/Cadet Blizzard) Activity
+id: e5151f01-7e7d-4c34-bf42-8cadcefdec80
+status: experimental
+description: >-
+  Detects a wide range of Tactics, Techniques, and Procedures (TTPs) associated with the Russian GRU Unit 29155, also known as Ember Bear, Cadet Blizzard, and UNC2589.
+  This rule covers process execution, network communications, and specific tool usage as detailed in CISA advisory AA24-249A.
+references:
+  - https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-249a
+author: RW
+date: 2025-08-21
+tags:
+  - attack.g1003
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+  - attack.t1562.001
+  - attack.command_and_control
+  - attack.t1090.003
+  - attack.t1572
+  - attack.credential_access
+  - attack.t1003
+  - attack.lateral_movement
+  - attack.t1550.002
+  - attack.exfiltration
+  - attack.t1567.002
+  - threat_group.ember_bear
+  - threat_group.cadet_blizzard
+  - threat_group.unc2589
+  - threat_group.uac-0056
+logsource:
+  # This is a composite rule that requires multiple log sources. The selections are mapped to the relevant categories.
+  # You may need to split this rule into multiple rules depending on your SIEM's log source capabilities.
+  product: generic
+detection:
+  # --- Process Creation Detections (category: process_creation) ---
+  selection_proc_ps_whispergate_encoded:
+    # Detects PowerShell execution with a specific encoded command used by WhisperGate's stage2.exe
+    # Decoded: "Start-Sleep -s 10"
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - '-enc'
+      - 'UwB0AGEAcgB0AC0AUwBsAGUAZQBwACAALQBzACAAMQAwAA=='
+  selection_proc_ps_defender_exclusion:
+    # Detects PowerShell command to exclude the C: drive from Windows Defender scans
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'Set-MpPreference'
+      - '-ExclusionPath'
+      - 'C:\'
+  selection_proc_whispergate_advancedrun:
+    # Detects AdvancedRun.exe used to disable Windows Defender
+    Image|endswith: '\AdvancedRun.exe'
+    CommandLine|contains:
+      - 'stop WinDefend'
+      - 'rmdir ''C:\ProgramData\Microsoft\Windows Defender'''
+  selection_proc_whispergate_installutil:
+    # Detects InstallUtil.exe being run from a temp directory, as seen in WhisperGate
+    Image|endswith: '\InstallUtil.exe'
+    CurrentDirectory|startswith:
+      - 'C:\Users\'
+      - 'C:\Windows\Temp\'
+  selection_proc_impacket_secretsdump:
+    # Detects execution of Impacket's secretsdump.py for credential dumping
+    CommandLine|contains: 'secretsdump.py'
+  selection_proc_impacket_psexec:
+    # Detects execution of Impacket's psexec.py for lateral movement
+    CommandLine|contains: 'psexec.py'
+  selection_proc_rclone_mega:
+    # Detects Rclone usage for data exfiltration to MEGA.
+    # This can be noisy in environments where Rclone is used for legitimate purposes.
+    Image|endswith:
+      - '\rclone.exe'
+      - '\rclone'
+    CommandLine|contains: 'mega.nz'
+  selection_proc_gost_tunnel:
+    # Detects GOST tunneling tool execution patterns
+    Image|endswith: '\java' # The tool was renamed to 'java'
+    CommandLine|contains|all:
+      - '-L'
+    CommandLine|contains:
+      - 'socks5://'
+      - 'rtcp://'
+  selection_proc_proxychains:
+    # Detects ProxyChains usage, which can be legitimate for network administrators.
+    CommandLine|contains: 'proxychains'
+  selection_proc_linux_bruteforce:
+    # Detects su-bruteforce tool
+    CommandLine|contains: 'su-bruteforce'
+  selection_proc_linux_peas:
+    # Detects execution of LinPEAS privilege escalation script
+    CommandLine|contains:
+      - 'linpeas.sh'
+      - 'linpeas.py'
+  # --- File Detections (category: file_creation, file_event) ---
+  selection_file_hash_gost:
+    # MD5 hash for the GOST tunneling tool
+    hash.md5: '896e0f54fc67d72d94b40d7885f10c51'
+  # --- Network and DNS Detections (category: network_connection, dns_query, proxy) ---
+  selection_net_discord_cdn:
+    # Detects network connections to Discord CDN, used by WhisperGate to download payloads
+    url.original|contains: 'cdn.discordapp.com/attachments/'
+  selection_net_c2_domains:
+    # Detects connections to known jump host and C2 domains
+    destination.domain|endswith:
+      - 'interlinks.top'
+      - '3proxy.ru'
+      - 'nssm.cc'
+  selection_net_ngrok:
+    # Ngrok is a legitimate service but is often abused by threat actors.
+    # Investigate the context of this activity before blocking.
+    destination.domain|endswith: 'ngrok.com'
+  selection_net_c2_ips:
+    # Detects connections to known Unit 29155 C2 IP addresses
+    destination.ip:
+      - '5.226.139.66'
+      - '45.141.87.11'
+      - '46.101.242.222'
+      - '62.173.140.223'
+      - '79.124.8.66'
+      - '90.131.156.107'
+      - '112.51.253.153'
+      - '112.132.218.45'
+      - '154.21.20.82'
+      - '179.43.133.202'
+      - '179.43.142.42'
+      - '179.43.162.55'
+      - '179.43.175.38'
+      - '179.43.175.108'
+      - '179.43.176.60'
+      - '179.43.187.47'
+      - '179.43.189.218'
+      - '185.245.84.227'
+      - '185.245.85.251'
+      - '194.26.29.84'
+      - '194.26.29.95'
+      - '194.26.29.98'
+      - '194.26.29.251'
+  selection_dns_tunneling:
+    # Detects DNS queries associated with Iodine DNS tunneling tool
+    dns.question.name: 'dns.test658324901domain.me'
+  condition: 1 of selection_*
+falsepositives:
+  - Some of the tools detected, such as Rclone, ProxyChains, and Ngrok, are legitimate and may be used by system administrators or developers. It is important to investigate the context of the activity.
+  - Network connections to Discord's CDN are common. The detection should be correlated with other suspicious activity.
+level: high

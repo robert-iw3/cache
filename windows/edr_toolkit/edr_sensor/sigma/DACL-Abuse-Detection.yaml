@@ -1,0 +1,31 @@
+title: Malicious Active Directory DACL Modification
+id: dc72a995-e152-4d5d-9d05-3d7ecfc28188
+status: experimental
+description: |
+  Detects modifications to an Active Directory object's Discretionary Access Control List (DACL) where potentially malicious permissions are granted.
+  Attackers may abuse DACL permissions to escalate privileges or establish persistence by granting themselves or other principals high-privilege rights like GenericAll, WriteDACL, or WriteOwner on sensitive objects such as user accounts, groups, or the AdminSDHolder container.
+author: RW
+date: 2025-08-22
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1098
+  - attack.t1546.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 5136 # A directory service object was modified.
+    LDAPDisplayName: 'nTSecurityDescriptor' # The attribute modified was the security descriptor, which contains the DACL.
+    Value|contains: # The new SDDL string contains an Access Control Entry (ACE) for a high-privilege right.
+      - '(A;;GA;;;'  # GenericAll: Full control over the object.
+      - '(A;;WD;;;'  # WriteDACL: Permission to modify the object's DACL.
+      - '(A;;WO;;;'  # WriteOwner: Permission to take ownership of the object.
+  filter_system:
+    SubjectUserSid: 'S-1-5-18' # Exclude the local SYSTEM account, which often performs legitimate DACL modifications (e.g., SDProp).
+  condition: selection and not filter_system
+falsepositives:
+  - Legitimate permission changes made by domain administrators or delegated administrators. This rule requires baselining of normal administrative activity.
+  - Investigation should focus on the `SubjectUserName` (who made the change) and the `ObjectDN` (what object was changed) to determine if the activity is authorized. Consider creating more specific filters for known administrative accounts or service accounts if noise is high.
+level: medium

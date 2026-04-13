@@ -1,0 +1,41 @@
+[package]
+name = "endpoint_monitor_driver"
+version = "0.6.2"
+edition = "2021"
+authors = ["Robert Weber"]
+license = "MIT"
+
+[package.metadata.wdk.driver-model]
+driver-type = "KMDF"  # Hybrid with WDM elements for safety/perf
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+
+[build-dependencies]
+wdk-build = "0.5.1"
+
+[dependencies]
+wdk = "0.5.1"
+wdk-sys = "0.5.1"
+wdk-alloc = "0.5.1"
+wdk-panic = "0.5.1"
+wdk-macros = "0.5.1"
+fsfilter-rs = "0.4.0"
+
+[features]
+default = ["registry", "threads", "objects", "ai_agent"]
+registry = []
+network = []
+ai_agent = []
+threads = []
+objects = []
+memory = []
+power = []
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

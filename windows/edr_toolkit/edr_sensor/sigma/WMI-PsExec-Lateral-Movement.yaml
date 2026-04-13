@@ -1,0 +1,50 @@
+title: WMI or PsExec for Lateral Movement
+id: 3f2f6018-5222-4571-8c98-f3ce20ddae73
+status: experimental
+description: Detects the use of Windows Management Instrumentation (WMI) or PsExec for lateral movement and remote command execution. This behavior is a known TTP of the threat actor Salt Typhoon. The rule identifies both source and target host activity for these techniques.
+references:
+author: RW
+date: 2025-07-31
+tags:
+  - attack.lateral_movement
+  - attack.execution
+  - attack.t1047
+  - attack.t1021.002
+  - threat_group.salt_typhoon
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_wmic_source:
+        # Detects remote process creation via wmic.exe on the source host
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains|all:
+      - '/node:'
+      - 'process'
+      - 'create'
+  selection_wmi_target:
+        # Detects processes spawned by the WMI Provider Host, indicative of remote WMI execution on the target host
+    ParentImage|endswith: '\WmiPrvSE.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\pwsh.exe'
+      - '\rundll32.exe'
+      - '\cscript.exe'
+      - '\wscript.exe'
+  selection_psexec_source:
+        # Detects PsExec or the alternative PaExec being run on the source host to target a remote system
+    Image|endswith:
+      - '\psexec.exe'
+      - '\psexec64.exe'
+      - '\paexec.exe'
+    CommandLine|contains: '\\'
+  selection_psexec_target:
+        # Detects commands being executed by the PsExec service on the target host
+    ParentImage|endswith: '\PSEXESVC.exe'
+  condition: 1 of them
+falsepositives:
+  - Legitimate remote administration by system administrators or management tools (e.g., SCCM) can trigger this alert.
+  - PsExec is a legitimate Sysinternals tool often used for remote management.
+  - Consider filtering based on known administrative accounts, source/destination hosts, or specific commands associated with legitimate tools.
+level: high

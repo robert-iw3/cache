@@ -1,0 +1,22 @@
+[Unit]
+Description=Linux Sentinel v2.3 Security Monitor
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/linux-sentinel/linux-sentinel enhanced
+User=nobody
+Group=nogroup
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

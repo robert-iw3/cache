@@ -1,0 +1,37 @@
+title: Katz Stealer C2 Communication
+id: 59319bc5-2e3a-4ba9-8eb5-37ee7be2fbc1
+status: experimental
+description: Detects network traffic to command and control (C2) servers associated with the Katz Stealer malware.
+references:
+  - https://www.sentinelone.com/blog/katz-stealer-powerful-maas-on-the-prowl-for-credentials-and-crypto-assets/
+author:
+date: 2025-07-23
+tags:
+  - attack.command_and_control
+  - attack.t1071
+  - malware.katz_stealer
+logsource:
+  category: network_connection
+  product: zeek
+detection:
+  selection_ip:
+        # Known Katz Stealer C2 IP addresses
+    destination.ip:
+      - '172.67.146.103'
+      - '185.107.74.40'
+      - '195.182.25.71'
+      - '31.177.109.39'
+      - '80.64.18.219'
+  selection_domain:
+        # Known Katz Stealer C2 domains
+    destination.domain:
+      - 'katz-panel.com'
+      - 'katz-stealer.com'
+      - 'katzstealer.com'
+      - 'pub-ce02802067934e0eb072f69bf6427bf6.r2.dev'
+      - 'twist2katz.com'
+      - 'Zxczxczxczxc.twist2katz.com'
+  condition: selection_ip or selection_domain
+falsepositives:
+  - IP addresses, particularly those on shared infrastructure, may be reallocated and could lead to false positives over time.
+level: high

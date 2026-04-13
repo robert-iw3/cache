@@ -1,0 +1,106 @@
+title: Warlock Ransomware Activity
+id: 5e4bb6ae-ad18-4716-86a1-9bd161f73d75
+status: experimental
+description: >-
+  This rule detects a combination of Tactics, Techniques, and Procedures (TTPs) associated with Warlock ransomware campaigns.
+  It looks for evidence of discovery, credential access, defense evasion, lateral movement, and exfiltration.
+references:
+  - https://www.trendmicro.com/en_us/research/25/h/warlock-ransomware.html
+author: RW
+date: 2025-08-21
+tags:
+  - attack.t1190
+  - attack.t1087.002
+  - attack.t1003.002
+  - attack.t1562.001
+  - attack.t1021.002
+  - attack.t1572
+  - attack.t1567.002
+  - attack.t1486
+logsource:
+  category:
+    - process_creation
+    - file_creation
+    - registry_set
+  product: windows
+detection:
+  timeframe: 1d
+    # Tactic: Initial Access & Privilege Escalation (via SharePoint)
+  selection_ia_privesc_sp:
+    category: process_creation
+    ParentImage|endswith: '\w3wp.exe'
+    ParentCommandLine|contains: 'SharePoint'
+    CommandLine|contains:
+      - 'net user guest /active:yes'
+      - 'net localgroup administrators guest /add'
+      - 'New-GPO'
+    # Tactic: Discovery
+  selection_discovery:
+    category: process_creation
+    CommandLine|contains:
+      - 'nltest /domain_trusts'
+      - 'wmic product get name,identifyingnumber'
+      - 'net group "domain admins"'
+      - 'net group "domain computers"'
+      - 'net group "domain controllers"'
+      - 'quser'
+    # Tactic: Credential Access
+  selection_creddump_mimikatz:
+    category: process_creation
+    Image|endswith: '\mimikatz.exe'
+  selection_creddump_reg_sam:
+    category: process_creation
+    CommandLine|contains|all:
+      - 'reg'
+      - 'save'
+      - 'hklm\sam'
+  selection_creddump_reg_sec:
+    category: process_creation
+    CommandLine|contains|all:
+      - 'reg'
+      - 'save'
+      - 'hklm\security'
+    # Tactic: Defense Evasion
+  selection_de_killav:
+    category: process_creation
+    ParentImage|endswith: '\vmtools.exe'     # Tool used to terminate security products
+    CommandLine|contains:
+      - 'taskkill'
+      - 'net stop'
+  selection_de_driver:
+    category: file_creation
+    TargetFilename|endswith: '\googleApiUtil64.sys'     # Malicious driver used to kill processes
+    # Tactic: Command and Control
+  selection_c2_tunnel:
+    category: process_creation
+    CommandLine|contains|all:
+      - 'tunnel'
+      - 'run'
+      - '--token'       # Cloudflare tunnel creation
+    # Tactic: Lateral Movement
+  selection_lm_copy:
+    category: process_creation
+    CommandLine|contains|all:
+      - 'copy'
+      - '\c$\users\public\'       # Copying tools to administrative shares
+    # Tactic: Persistence & Defense Evasion
+  selection_pers_rdp:
+    category: registry_set
+    Details: '0'
+    TargetObject|endswith:
+      - '\SYSTEM\CurrentControlSet\Control\Terminal Server\fDenyTSConnections'       # Enable RDP
+      - '\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\UserAuthentication'       # Disable NLA
+    # Tactic: Exfiltration
+  selection_exfil_rclone:
+    category: process_creation
+    ParentImage|endswith:     # Renamed RClone
+      - '\rclone.exe'
+      - '\TrendSecurity.exe'
+    CommandLine|contains|all:
+      - 'copy'
+      - '--protondrive-username'
+      - '--protondrive-password'
+  condition: 2 of selection_*
+falsepositives:
+  - This is a correlation rule that combines multiple weak signals. Individual components, such as copying files to C$ or modifying RDP settings, might be legitimate administrative behavior. The rule's strength comes from detecting multiple distinct TTPs on the same host in a short period. Consider tuning by adding known administrative accounts or tools to an exclusion list.
+level: high

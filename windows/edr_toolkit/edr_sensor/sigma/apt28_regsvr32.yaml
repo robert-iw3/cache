@@ -1,0 +1,30 @@
+title: APT28 - Regsvr32 LOLBin Execution with Remote Payload
+id: b27c1c3a-apt28-regsvr32
+description: Detects use of regsvr32.exe to load remote script/control objects
+  from suspicious URLs, a technique used by APT28 and others.
+author:
+status: experimental
+tags:
+  - attack.execution
+  - attack.t1218.010
+  - attack.t1105
+  - apt.apt28
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Image|endswith: '\regsvr32.exe'
+    CommandLine|contains:
+      - 'http'
+      - '.sct'
+      - '.ocx'
+  condition: selection
+fields:
+  - CommandLine
+  - Image
+  - ParentImage
+  - User
+falsepositives:
+  - Software installation using regsvr32 legitimately
+level: high

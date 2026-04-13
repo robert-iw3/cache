@@ -1,0 +1,64 @@
+title: ESXi VM Escape Toolkit Attack Chain
+id: f011fd7c-6422-4d5b-864a-7dcf0d805175
+status: experimental
+description: >-
+  Detects a multi-layered attack chain associated with an ESXi VM Escape toolkit.
+  This rule identifies known malicious file hashes, specific defense evasion techniques
+  like disabling VMware drivers and isolating the host network, and the execution of a kernel driver loading utility.
+references:
+author: RW
+date: 2026-01-09
+tags:
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.persistence
+  - attack.t1562.001
+  - attack.t1547.006
+  - attack.t1210
+logsource:
+  category:
+    - process_creation
+    - file_event
+  product:
+    - windows
+    - linux
+detection:
+    # Layer 1: Known malicious file hashes (process execution or file creation)
+  selection_hash:
+    sha256:
+      - '37972a232ac6d8c402ac4531430967c1fd458b74a52d6d1990688d88956791a7'        # MAESTRO
+      - '4614346fc1ff74f057d189db45aa7dc25d6e7f3d9b68c287a409a53c86dca25e'        # GetShell Plugin
+      - 'c3f8da7599468c11782c2332497b9e5013d98a1030034243dfed0cf072469c89'        # VSOCKpuppet
+      - '2bc5d02774ac1778be22cace51f9e35fe7b53378f8d70143bf646b68d2c0f94c'        # MyDriver.sys
+
+    # Layer 2: devcon.exe used to disable VMware VMCI devices
+  selection_devcon:
+    Image|endswith: '\devcon.exe'
+    CommandLine|contains: 'disable'
+    CommandLine|contains|any:
+      - 'PCI\VEN_15AD&DEV_0740'
+      - 'ROOT\VMWVMCIHOSTDEV'
+
+    # Layer 3: Kernel Driver Utility (KDU) execution
+  selection_kdu:
+    Image|endswith: '\kdu.exe'
+
+    # Layer 4: netsh.exe used to isolate the host network
+  selection_netsh:
+    Image|endswith: '\netsh.exe'
+    CommandLine|contains|all:
+      - 'advfirewall'
+      - 'add'
+      - 'rule'
+      - 'action=block'
+      - 'dir=out'
+      - 'remoteip=0.0.0.0-255.255.255.255'
+
+    # Layer 5: ESXi inetd.conf file modified
+  selection_inetd:
+    TargetFilename: '/var/run/inetd.conf'
+
+  condition: 1 of them
+falsepositives:
+  - The use of 'devcon.exe' or 'netsh.exe' by system administrators for legitimate purposes could cause false positives. Tuning may be required based on parent processes or specific user activity. The execution of 'kdu.exe' is highly suspicious.
+level: critical

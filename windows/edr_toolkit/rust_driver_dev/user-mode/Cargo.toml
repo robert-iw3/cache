@@ -1,0 +1,10 @@
+[package]
+name = "pilot_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+windows = "0.58" # Updated to latest stable (better Win32 API coverage)
+log = "0.4"
+env_logger = "0.11" # Updated to latest
+clap = { version = "4.5", features = ["derive"] }  # Optional but highly recommended

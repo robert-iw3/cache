@@ -1,0 +1,27 @@
+title: Potential Kerberoasting Activity via RC4 Ticket Request
+id: fdd31ffe-4f6e-4691-94c8-326014cf89a6
+status: experimental
+description: |
+  Detects potential Kerberoasting attacks by monitoring for Kerberos service ticket requests (TGS-REQ) that use the RC4-HMAC encryption type.
+  Attackers often target service accounts with Service Principal Names (SPNs) and request service tickets (TGS) for them. If the account's password is weak, the ticket, which is encrypted with the account's NTLM hash, can be cracked offline.
+  This rule specifically looks for tickets requested with the weaker RC4 encryption algorithm (0x17), a common indicator of this attack.
+author: RW
+date: 2025-08-22
+tags:
+  - attack.credential_access
+  - attack.t1558.003
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4769 # A Kerberos service ticket was requested.
+    Status: '0x0' # Successful ticket request.
+    TicketEncryptionType: '0x17' # RC4-HMAC encryption, a common target for Kerberoasting due to its relative weakness.
+  filter:
+    ServiceName|endswith: '$' # Exclude machine accounts, which are not typically targeted in Kerberoasting attacks.
+  condition: selection and not filter
+falsepositives:
+  - Some legacy applications may still legitimately use RC4 encryption. It is recommended to investigate the requesting account and the target service to determine if the activity is expected.
+  - If your organization has known services that rely on RC4, consider adding them to an exclusion list.
+level: medium

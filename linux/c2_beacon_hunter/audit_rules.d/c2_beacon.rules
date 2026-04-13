@@ -1,0 +1,48 @@
+# =============================================================================
+# c2_beacon_hunter Audit Rules - v2.6
+# Captures: Process exec, DNS C2, Fileless, Malleable C2, Masquerading, Persistence
+# Copy: sudo cp audit_rules.d/c2_beacon.rules /etc/audit/rules.d/
+# Load with: sudo auditctl -R /etc/audit/rules.d/c2_beacon.rules
+# Reload with: sudo systemctl restart auditd
+# =============================================================================
+
+-D
+
+# === Process Execution + Full Command Line (Critical for C2 & LOLBins) ===
+-a always,exit -F arch=b64 -S execve,execveat -k process_exec
+-a always,exit -F arch=b32 -S execve,execveat -k process_exec
+
+# === Network Connections (Outbound C2 Beaconing) ===
+-a always,exit -F arch=b64 -S connect -F success=1 -k network_connect
+-a always,exit -F arch=b32 -S connect -F success=1 -k network_connect
+
+# === DNS C2 Detection ===
+-a always,exit -F arch=b64 -S sendto,sendmsg,sendmmsg -k dns_traffic
+-a always,exit -F arch=b32 -S sendto,sendmsg,sendmmsg -k dns_traffic
+
+-a always,exit -F arch=b64 -S recvfrom,recvmsg,recvmmsg -k dns_traffic
+-a always,exit -F arch=b32 -S recvfrom,recvmsg,recvmmsg -k dns_traffic
+
+# === Fileless Execution ===
+-a always,exit -F arch=b64 -S memfd_create -k fileless_exec
+-a always,exit -F arch=b32 -S memfd_create -k fileless_exec
+
+# === Suspicious Temporary / In-Memory Execution ===
+-a always,exit -F arch=b64 -F dir=/tmp -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/tmp -F perm=x -k suspicious_exec
+-a always,exit -F arch=b64 -F dir=/dev/shm -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/dev/shm -F perm=x -k suspicious_exec
+-a always,exit -F arch=b64 -F dir=/run -F perm=x -k suspicious_exec
+-a always,exit -F arch=b32 -F dir=/run -F perm=x -k suspicious_exec
+
+# === Process Masquerading & Credential Changes ===
+-a always,exit -F arch=b64 -S prctl,setuid,setgid -k proc_cred
+-a always,exit -F arch=b32 -S prctl,setuid,setgid -k proc_cred
+
+# === Optional: Socket Creation (helps detect raw sockets / DNS C2) ===
+-a always,exit -F arch=b64 -S socket -k socket_create
+-a always,exit -F arch=b32 -S socket -k socket_create
+
+# =============================================================================
+# End of rules
+# =============================================================================

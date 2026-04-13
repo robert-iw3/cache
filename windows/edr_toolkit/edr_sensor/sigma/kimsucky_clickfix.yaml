@@ -1,0 +1,72 @@
+title: Kimsuky ClickFix Tactic PowerShell Execution
+id: da5d890e-636e-40cd-8b15-644e382c5d9e
+status: experimental
+description: Detects the "ClickFix" tactic used by the Kimsuky group, where
+  users are tricked into executing malicious PowerShell commands. This includes
+  techniques like reverse-string obfuscation and the use of specific junk
+  strings to evade detection.
+references:
+  - https://www.genians.co.kr/en/blog/threat_intelligence/suky-castle
+author:
+date: 2025-07-10
+tags:
+  - attack.execution
+  - attack.t1204.002
+  - attack.defense_evasion
+  - attack.t1027
+  - threat_actor.kimsuky
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_reverse_string:
+    # Detects the specific PowerShell command used to reverse and execute a string.
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - '.ToCharArray()'
+      - '[-1..-'
+      - '.Length]'
+      - 'cmd /c'
+  selection_junk_string:
+    # Detects the use of a specific junk string that is removed at runtime via the 'call' command.
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - 'call %'
+      - ':7539518426='
+  selection_chained_commands:
+    # Detects a sequence of malicious commands chained together, often launched from PowerShell.
+    ParentImage|endswith: '\powershell.exe'
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - 'mkdir c:\tempcaches'
+      - 'attrib'
+      - '+s'
+      - '+h'
+      - 'curl'
+      - 'schtasks'
+  selection_network_ioc:
+    # Detects command line execution containing known Kimsuky C2 domains or URI paths.
+    # This may catch variations of the malware communicating with known infrastructure.
+    CommandLine|contains:
+      - 'konamo.xyz'
+      - 'raedom.store'
+      - 'kida.plusdocs.kro.kr'
+      - 'androcl.csproject.org'
+      - '/demo.php?ccs=cin'
+      - '/demo.php?ccs=cout'
+      - 'cukumam.shop'
+      - 'bikaro.store'
+      - 'naunsae.store'
+      - 'tenelbox.store'
+      - 'temuco.xyz'
+  condition: 1 of them
+falsepositives:
+  - Legitimate scripts that use PowerShell for string manipulation or command
+    chaining
+  - although the specific combination of indicators in this rule is highly
+    suspicious.
+  - Network infrastructure changes by the threat actor
+  - rendering the network IOCs (konamo.xyz
+  - raedom.store
+  - etc.) outdated.
+level: high

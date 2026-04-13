@@ -1,0 +1,30 @@
+title: APT28 Malicious Document Dropping BEARDSHELL/COVENANT Loaders
+id: bdac7d37-e761-4402-8905-67993419e349
+status: experimental
+description: Detects a Microsoft Word process creating files in locations known to be used by an APT28 campaign. This activity is associated with the execution of a malicious macro from a document, which drops a loader DLL (`ctec.dll`) and a file containing shellcode (`windows.png`).
+author: Rob Weber
+date: 2025-07-27
+tags:
+  - attack.initial_access
+  - attack.execution
+  - attack.t1566.001
+  - attack.t1204.002
+  - threat_actor.apt28
+  - malware.beardshell
+  - malware.covenant
+logsource:
+  category: file_event
+  product: windows
+detection:
+  # Detects file creation events where the parent process is Microsoft Word
+  parent_process:
+    ParentImage|endswith: '\winword.exe'
+  # Detects the specific files dropped by the malicious macro
+  file_creation:
+    TargetFilename|endswith:
+      - '\AppData\Roaming\Microsoft\Protect\ctec.dll'
+      - '\AppData\Local\windows.png'
+  condition: parent_process and file_creation
+falsepositives:
+  - The filename `windows.png` is generic. However, the likelihood of a legitimate user saving a file with this specific name from Word into the `AppData\Local` directory is low. This detection is best scoped to user workstations.
+level: high

@@ -1,0 +1,34 @@
+title: Microsoft Edge DLL Hijacking in User-Writable Path
+id: a6ee096b-0dc7-4562-990a-e6baf6e52f94
+status: experimental
+description: Detects the creation or loading of any DLL file in a specific user-writable Microsoft Edge path. This activity is indicative of a DLL search order hijacking attack for persistence and defense evasion.
+references:
+author: RW
+date: 2025-08-12
+tags:
+  - attack.defense_evasion
+  - attack.persistence
+  - attack.t1574.001
+logsource:
+  category:
+    - file_event
+    - image_load
+  product: windows
+detection:
+  selection_file_create:
+        # Detects any DLL created in the specific Edge user data path
+    TargetFilename|endswith: '.dll'
+    TargetFilename|contains|all:
+      - '\AppData\Local\Microsoft\Edge\'
+      - '\User Data\Well Known Domains\'
+  selection_image_load:
+        # Detects Edge loading any DLL from the specific user data path
+    Image|endswith: '\msedge.exe'
+    ImageLoaded|endswith: '.dll'
+    ImageLoaded|contains|all:
+      - '\AppData\Local\Microsoft\Edge\'
+      - '\User Data\Well Known Domains\'
+  condition: 1 of them
+falsepositives:
+  - Legitimate Microsoft Edge updates or components could potentially write or load DLLs from this path. Consider filtering for unsigned DLLs or those created by processes other than 'msedge.exe' or 'msedgeupdate.exe'.
+level: medium

@@ -1,0 +1,21 @@
+# /etc/apparmor.d/usr.bin.chromium
+#include <tunables/global>
+
+profile chromium /usr/bin/chromium* {
+  #include <abstractions/base>
+  #include <abstractions/audio>
+  #include <abstractions/dbus-session>
+
+  network inet,
+  network inet6,
+
+  /usr/** r,
+  /etc/** r,
+  owner @{HOME}/** rw,
+
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/python* x,
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+}

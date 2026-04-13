@@ -1,0 +1,11 @@
+### Dockerfile.client ###
+FROM python:3.11-slim
+
+RUN pip install requests
+
+COPY client_parser.py /app/client_parser.py
+COPY schema.json /app/schema.json
+
+WORKDIR /app
+
+CMD ["python", "client_parser.py"]

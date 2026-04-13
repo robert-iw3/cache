@@ -1,0 +1,46 @@
+; driver.inf - INF file for Endpoint Monitor Driver (Minifilter)
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=ActivityMonitor  ; Standard class for minifilters
+ClassGuid={b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}  ; Standard GUID for ActivityMonitor class
+Provider=%ManufacturerName%
+DriverVer=02/07/2026,0.4.0.0  ; Match your version
+CatalogFile=endpoint_monitor_driver.cat  ; For signing (generate with signtool)
+
+[DestinationDirs]
+DefaultDestDir=12  ; System32\drivers
+
+[Manufacturer]
+%ManufacturerName%=Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceName%=DriverInstall,endpoint_monitor_driver
+
+[DriverInstall]
+CopyFiles=DriverCopyFiles
+
+[DriverCopyFiles]
+endpoint_monitor_driver.sys,,,2
+
+[DriverInstall.Services]
+AddService=endpoint_monitor_driver,2,DriverService
+
+[DriverService]
+DisplayName=%ServiceName%
+ServiceType=1  ; Kernel driver
+StartType=3  ; Demand start (manual; tune to 2 for auto if needed)
+ErrorControl=1  ; Normal
+ServiceBinary=%12%\endpoint_monitor_driver.sys
+LoadOrderGroup=FSFilter Activity Monitor
+AddReg=DriverAddReg
+
+[DriverAddReg]
+HKR, "Instances", "DefaultInstance", 0x00000000, "Endpoint Monitor Instance"
+HKR, "Instances\Endpoint Monitor Instance", "Altitude", 0x00000000, "320000"  ; Balanced altitude (high enough to see ops, low enough not to conflict)
+HKR, "Instances\Endpoint Monitor Instance", "Flags", 0x00010001, 0x0  ; No flags
+
+[Strings]
+ManufacturerName="Robert_Weber"
+DeviceName="Endpoint Monitor Driver"
+ServiceName="Endpoint Monitor Driver"

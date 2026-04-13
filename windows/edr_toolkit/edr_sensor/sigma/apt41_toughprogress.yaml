@@ -1,0 +1,28 @@
+title: APT41 TOUGHPROGRESS Initial Execution via LNK
+id: f1b2c3d4-e5f6-5a7b-8c9d-0a1b2c3d4e5f
+description: >-
+  Detects the initial execution pattern of the APT41 TOUGHPROGRESS malware via a
+  malicious LNK file executing rundll32.exe with a specific command line
+  argument as described in the Google Cloud blog.
+author:
+date: 2025-05-29T00:00:00.000Z
+references:
+  - >-
+    https://cloud.google.com/blog/topics/threat-intelligence/apt41-innovative-tactics
+detection:
+  selection:
+    Image|endswith: \rundll32.exe
+    CommandLine|contains: .\image\7.jpg,plus
+  condition: selection
+falsepositives:
+  - Unlikely, as the command line pattern is very specific to this malware.
+level: high
+tags:
+  - attack.execution
+  - attack.t1204.001
+  - attack.t1059
+  - apt41
+  - toughprogress
+logsource:
+  category: process_creation
+  product: windows

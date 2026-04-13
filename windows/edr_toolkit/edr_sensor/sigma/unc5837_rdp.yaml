@@ -1,0 +1,24 @@
+title: Suspicious RDP File Execution From Email Attachment
+id: 8f1c2d3e-4a5b-6c7d-8e9f-0123456789ab
+status: experimental
+description: Detects the execution of mstsc.exe with a command line pointing to an RDP file located in temporary directories commonly used by email clients for attachments. This technique was observed in the UNC5837 "Rogue RDP" campaign.
+references:
+    - https://cloud.google.com/blog/topics/threat-intelligence/windows-remote-desktop-protocol-remote-to-rogue
+author:
+date: 2025/04/30
+logsource:
+    product: windows
+    service: sysmon
+    definition: 'Requires Sysmon logging with Event ID 1 enabled.'
+detection:
+    selection:
+        EventID: 1
+        Image|endswith: '\mstsc.exe'
+        CommandLine|re:
+            - '(?i)"?.*\\AppData\\Local\\Microsoft\\Windows\\(INetCache|Temporary Internet Files)\\Content\.Outlook\\[A-Z0-9]{8}\\[^\\]{1,255}\.rdp"?'
+            - '(?i)"?.*\\AppData\\Local\\Packages\\Microsoft\.Outlook_[a-zA-Z0-9]{1,50}\\.{0,120}\\[^\\]{1,80}\.rdp"?'
+            - '(?i)"?.*\\AppData\\Local\\Microsoft\\Olk\\Attachments\\([^\\]{1,50}\\){0,5}[^\\]{1,80}\.rdp"?'
+    condition: selection
+falsepositives:
+    - Legitimate RDP files sent via email and opened directly by users. Evaluate based on organizational policy and typical user behavior.
+level: high

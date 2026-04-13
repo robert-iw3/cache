@@ -1,0 +1,80 @@
+title: Salt Typhoon and UNC4841 Combined Endpoint TTPs
+description: >-
+  Detects a combination of endpoint-based Tactics, Techniques, and Procedures (TTPs) associated with the Chinese APT groups Salt Typhoon and UNC4841.
+  This rule identifies defense evasion via Linux log clearing and credential access from web browsers on Windows.
+  This detection should be correlated with network-based detections for C2 communication to known Salt Typhoon domains for higher fidelity.
+author: RW
+date: 2025-09-09
+tags:
+  - attack.credential_access
+  - attack.defense_evasion
+  - attack.t1555.003
+  - attack.t1070.003
+logsource:
+  category: process_creation
+  product:
+    - windows
+    - linux
+detection:
+  # T1555.003: Credentials from Password Stores: Web Browsers (Windows)
+  cred_harvest:
+    CommandLine|contains:
+      - 'Login Data'
+      - 'Web Data'
+      - 'Cookies'
+      - 'key4.db'
+      - 'logins.json'
+    CommandLine|contains|any:
+      - 'AppData\Local\Google'
+      - 'AppData\Roaming\Mozilla'
+      - 'AppData\Local\Microsoft\Edge'
+      - 'AppData\Local\BraveSoftware'
+  cred_harvest_filter_known_browsers:
+    Image|endswith:
+      - '\chrome.exe'
+      - '\msedge.exe'
+      - '\firefox.exe'
+      - '\brave.exe'
+      - '\opera.exe'
+      - '\vivaldi.exe'
+
+  # T1070.003: Indicator Removal: Clear Command History (Linux)
+  log_clear_tools:
+    Image|endswith:
+      - '/shred'
+      - '/truncate'
+      - '/rm'
+    CommandLine|contains|any:
+      - '.bash_history'
+      - 'auth.log'
+      - 'lastlog'
+      - 'wtmp'
+      - 'btmp'
+  log_clear_overwrite:
+    CommandLine|contains|any:
+      # Detects overwriting files by redirecting null or empty output.
+      - 'cat /dev/null >'
+      - 'echo >'
+      - 'printf ''''' >' # Use five single quotes to represent a single quote inside a single-quoted string
+    CommandLine|contains|any:
+      - '.bash_history'
+      - 'auth.log'
+      - 'lastlog'
+      - 'wtmp'
+      - 'btmp'
+  log_clear_shell_truncate:
+    Image|endswith:
+      - '/bash'
+      - '/sh'
+      - '/zsh'
+      - '/ksh'
+    CommandLine|re: '^\s*>\s*.*(\.bash_history|auth\.log|lastlog|wtmp|btmp)\b'
+  log_clear_history_cmd:
+    Image|endswith: '/history'
+    CommandLine|contains: ' -c'
+
+  condition: (cred_harvest and not cred_harvest_filter_known_browsers) or 1 of log_clear_*
+falsepositives:
+  - Legitimate administrative scripts may perform log clearing or rotation.
+  - Password managers or data backup utilities may access browser credential files. Exclude known legitimate processes if necessary.
+level: high

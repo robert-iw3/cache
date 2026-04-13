@@ -1,0 +1,37 @@
+title: TAG-140 DRAT V2 Initial Execution via MSHTA
+id: 9713626e-923f-4217-8141-860888995321
+status: experimental
+description: Detects the execution of mshta.exe to fetch and run remote scripts, a technique used by TAG-140 for initial access and loading the BroaderAspect loader and DRAT V2. This activity is often initiated via social engineering lures.
+author:
+date: 2025-06-24
+references:
+    - https://www.recordedfuture.com/research/drat-v2-updated-drat-emerges-tag-140s-arsenal
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_mshta:
+        Image|endswith: '\mshta.exe'
+    selection_remote_url:
+        CommandLine|contains:
+            - 'http://'
+            - 'https://'
+    selection_script_extension:
+        CommandLine|contains:
+            - '.hta'
+            - '.php' # As seen in the provided example, mshta.exe can be used to load content from .php endpoints serving HTA content.
+    condition: all of selection_*
+falsepositives:
+    - Legitimate use of mshta.exe to open local HTA files (not remote URLs)
+    - Development or testing activities that involve mshta.exe loading remote content
+level: high
+tags:
+    - attack.execution
+    - attack.t1218.005 # Signed Binary Proxy Execution: Mshta
+    - attack.defense_evasion
+    - attack.command_and_control
+    - attack.t1059 # Command and Scripting Interpreter
+    - attack.t1059.005 # Command and Scripting Interpreter: Visual Basic
+    - attack.t1059.007 # Command and Scripting Interpreter: JavaScript/JScript
+    - attack.malware.drat # Specific malware family
+    - attack.group.g0139 # TAG-140 / SideCopy

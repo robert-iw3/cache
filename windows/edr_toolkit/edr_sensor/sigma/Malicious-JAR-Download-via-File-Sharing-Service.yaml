@@ -1,0 +1,31 @@
+title: Malicious JAR Download via File Sharing Service
+id: 312f36a5-bc0b-49ee-bc47-0e8bad8ad3a3
+status: experimental
+description: >-
+  Detects the download of a Java Archive (.jar) file from a common file-sharing service like Dropbox or MediaFire.
+  This behavior is associated with a sophisticated email campaign where attackers use a PDF attachment with embedded links
+  to trick users into downloading and executing a Remote Access Trojan (RAT) like RATty.
+references:
+  - https://www.fortinet.com/blog/threat-research/multilayered-email-attack-how-a-pdf-invoice-and-geofencing-led-to-rat-malware
+author:
+date: 2025-07-23
+tags:
+  - attack.initial_access
+  - attack.t1566.001
+  - attack.execution
+  - attack.t1204.002
+  - malware.ratty
+logsource:
+  category: proxy
+detection:
+  selection:
+    c-host|endswith: # The domain the request was sent to. Attackers used MediaFire but could use other similar services.
+      - 'dropbox.com'
+      - 'mediafire.com'
+    sc-filename|endswith: '.jar' # The name of the downloaded file.
+    # Note: Field names for requested hostname (c-host) and filename (sc-filename) may vary by proxy log source.
+  condition: selection
+falsepositives:
+  - Legitimate Java applications or libraries distributed via these file-sharing platforms.
+  - This may be common in environments with Java developers. Consider tuning by excluding developer user-agents or workstations.
+level: medium

@@ -1,0 +1,105 @@
+---
+services:
+  central-hunter:
+    build:
+      context: ..
+      dockerfile: ebpf.Dockerfile
+    container_name: c2-central-hunter
+    privileged: true
+    network_mode: host
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:rw
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+      - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
+      - ./output:/app/output:rw
+      - ./data:/app/data:rw
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - /proc:/host/proc:ro
+      - ./certs:/app/certs:ro
+    environment:
+      - MODE=central
+      - TARGET_INTERFACE=${TARGET_INTERFACE:-wlo1}
+      - TEST_MODE=false
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    command: >
+      sh -c "
+        cp /app/v3.0/config.ini /app/config.ini 2>/dev/null || true &&
+        python3 /app/c2_beacon_hunter.py --output-dir /app/output
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api-dashboard:
+    image: python:3.12-slim
+    container_name: c2-api-dashboard
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./api_server.py:/app/api_server.py:ro
+      - ./static:/app/static:ro
+      - ./certs:/app/certs:ro
+      - ./data:/app/data:ro
+      - ./output:/app/output:ro
+    working_dir: /app
+    command: >
+      bash -c "
+        pip install fastapi uvicorn[standard] psycopg2-binary requests scapy &&
+        uvicorn api_server:app --host 0.0.0.0 --port 8443 \
+          --ssl-keyfile=/app/certs/key.pem \
+          --ssl-certfile=/app/certs/cert.pem \
+          --ssl-version TLSv1_2
+      "
+    depends_on:
+      - central-hunter
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: c2-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: c2_beacon_hunter
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d c2_beacon_hunter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: c2-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=postgres-datasource
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+
+volumes:
+  postgres_data:
+  grafana_data:

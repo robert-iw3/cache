@@ -1,0 +1,22 @@
+title: UNC3886 Process Memory Patching via DD
+description: Detects the use of the 'dd' command to write directly to a process's memory space (/proc/<pid>/mem), a technique used by UNC3886 to patch running processes like snmpd and mgd on Juniper routers to disable logging or other functions.
+author:
+date: 2025-05-13
+references:
+  - https://cloud.google.com/blog/topics/threat-intelligence/china-nexus-espionage-targets-juniper-routers/
+logsource:
+  category: process_creation
+  # product: linux # Adjust product based on specific OS and logging source (e.g., freebsd, junos if supported)
+detection:
+  selection:
+    process_name: "dd"
+    command_line|contains:
+      - "/proc/"
+      - "/mem"
+      - "conv=notrunc"
+      - "oseek="
+  condition: selection
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1055 # Process Injection

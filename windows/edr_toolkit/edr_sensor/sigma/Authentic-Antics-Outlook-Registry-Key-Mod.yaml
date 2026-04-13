@@ -1,0 +1,25 @@
+title: AUTHENTIC ANTICS Outlook Registry Modification
+id: ef3a9baf-331a-4d66-8e86-8b20612f3fe7
+status: experimental
+description: Detects the creation or modification of specific registry keys in the Outlook logging path used by the AUTHENTIC ANTICS malware to store stolen OAuth 2.0 refresh tokens and control execution frequency.
+references:
+  - https://www.ncsc.gov.uk/static-assets/documents/malware-analysis-reports/authentic-antics/ncsc-mar-authentic_antics.pdf
+author: Rob Weber
+date: 2025-07-26
+tags:
+  - attack.credential_access
+  - attack.persistence
+  - malware.authentic_antics
+logsource:
+  category: registry_set
+  product: windows
+detection:
+  selection:
+        # Registry keys used by AUTHENTIC ANTICS for storing stolen tokens and execution timing
+    TargetObject|endswith:
+      - '\Software\Microsoft\Office\16.0\Outlook\Logging\Locale'
+      - '\Software\Microsoft\Office\16.0\Outlook\Logging\Counter'
+  condition: selection
+falsepositives:
+  - The NCSC report indicates that the 'Counter' value in this location is not legitimate. While modification of the 'Locale' key is less common, legitimate Outlook add-ins or processes could potentially write to this key.
+level: high

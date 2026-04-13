@@ -1,0 +1,31 @@
+title: CRYSTALRAY Platypus C2 Payload Download
+id: afb84243-34c6-4c70-8ce4-e970d3d191cc
+status: experimental
+description: Detects the download of a payload from a Platypus C2 server using curl or wget. This technique is used by the CRYSTALRAY threat actor to establish a reverse shell on a compromised host.
+references:
+  - https://www.sysdig.com/blog/crystalray-rising-threat-actor-exploiting-oss-tools
+author: RW
+date: 2025-08-07
+tags:
+  - attack.command_and_control
+  - attack.t1105
+  - attack.t1071.001
+  - threat_actor.crystalray
+  - tool.platypus
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  tools:
+    Image|endswith:
+      - '/curl'
+      - '/wget'
+  keywords:
+    CommandLine|contains:
+      - '/termite/'  # Specific path for Platypus payloads
+      - ':13338'  # Default reverse shell port
+      - ':13339'  # Default reverse shell port
+  condition: tools and keywords
+falsepositives:
+  - Legitimate use of a tool named Platypus is possible but unlikely. The combination of common download tools (`curl`, `wget`) with the specific path (`/termite/`) and default ports makes false positives very unlikely.
+level: high

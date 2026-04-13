@@ -1,0 +1,78 @@
+title: Unsigned Process From Unusual Location With Network Connection
+id: b04071a7-709a-4b1c-a22a-d0ec193cee6f
+status: experimental
+description: >-
+  Detects an unsigned process executing from a common user-writable or temporary directory
+  that also makes an outbound network connection. This behavior is highly indicative of
+  custom-built malware or Remote Access Trojans (RATs) as described in the provided threat intelligence.
+references:
+author: RW
+date: 2025-08-20
+tags:
+  - attack.execution
+  - attack.command_and_control
+  - attack.t1059
+logsource:
+  product: windows
+  # This rule requires two event types: process_creation and network_connection.
+  # The SIEM must be able to correlate these events on a unique process identifier.
+detection:
+  # Note: Correlation must be performed on a unique process identifier (e.g., ProcessGuid for Sysmon)
+  # or a combination of Hostname and ProcessId within a short timeframe (e.g., 1 minute).
+  selection_process:
+    category: process_creation
+    Image|contains:
+      - 'C:\Users\'
+      - 'C:\ProgramData\'
+      - 'C:\PerfLogs\'
+      - 'C:\Windows\Temp\'
+    # This checks if the binary is unsigned, a common attribute of custom malware.
+    SignatureStatus: 'Unsigned'
+  filter_legit:
+    selection_process:
+      Image|endswith:
+        - '\teams.exe'
+        - '\ms-teams.exe'
+        - '\OneDrive.exe'
+        - '\chrome.exe'
+        - '\msedge.exe'
+        - '\gupdate.exe'
+        - '\slack.exe'
+        - '\Zoom.exe'
+        - '\Code.exe'
+        - '\Spotify.exe'
+        - '\msrdc.exe'
+
+  selection_network:
+    category: network_connection
+    # This selection must be correlated with 'selection_process'.
+    # Filters for connections to public IP addresses, ignoring private/internal ranges.
+    DestinationIp|startswith|negate:
+      - '10.'
+      - '127.'
+      - '169.254.'
+      - '172.16.'
+      - '172.17.'
+      - '172.18.'
+      - '172.19.'
+      - '172.20.'
+      - '172.21.'
+      - '172.22.'
+      - '172.23.'
+      - '172.24.'
+      - '172.25.'
+      - '172.26.'
+      - '172.27.'
+      - '172.28.'
+      - '172.29.'
+      - '172.30.'
+      - '172.31.'
+      - '192.168.'
+      - '::1'
+      - 'fe80:'
+
+  condition: selection_process and not filter_legit and selection_network
+falsepositives:
+  - Legitimate software installers, updaters, or portable applications may be unsigned and execute from user directories while connecting to the internet.
+  - Thoroughly test and tune the 'filter_legit' section by adding legitimate processes common in your environment.
+level: medium
