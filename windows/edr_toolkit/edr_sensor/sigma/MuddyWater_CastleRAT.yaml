@@ -1,0 +1,14 @@
+title: MuddyWater CastleRAT - Staging Directory Access
+id: 6dd368d0-b195-4592-9795-abfa1ba5c758-2
+status: experimental
+description: Detects the creation or modification of the CastleRAT keylogger staging directory.
+author: RW
+date: 2026-04-13
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_staging_file:
+    TargetFilename|contains: '\AppData\Local\MashaLasley'
+  condition: selection_staging_file
+level: critical

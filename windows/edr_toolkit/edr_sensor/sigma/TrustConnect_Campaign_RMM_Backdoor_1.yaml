@@ -1,0 +1,32 @@
+title: TrustConnect Campaign RMM Backdoor - Process Execution
+id: c400a8b1-8051-455f-9025-633bf9c72457-1
+status: experimental
+description: Detects suspicious PowerShell commands silently installing ScreenConnect or Tactical RMM, and command lines containing known TrustConnect C2 domains.
+author: RW
+date: 2026-04-13
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  # Detects PowerShell downloading and silently installing specific RMM tools
+  selection_ps_base:
+    CommandLine|contains|all:
+      - 'Invoke-WebRequest'
+      - 'msiexec'
+      - 'quiet'
+  selection_ps_rmm:
+    CommandLine|contains:
+      - 'ScreenConnect'
+      - 'Tactical RMM'
+      - 'tacticalrmm'
+
+  # Detects process execution involving the campaign's C2 domains
+  selection_domains_cmd:
+    CommandLine|contains:
+      - 'trustconnectsoftware.com'
+      - 'pacdashed.com'
+
+  condition: (selection_ps_base and selection_ps_rmm) or selection_domains_cmd
+falsepositives:
+  - Security products analyzing or detonating the malicious scripts.
+level: high

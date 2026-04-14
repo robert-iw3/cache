@@ -1,0 +1,70 @@
+title: EtherRAT and SYS_INFO Module Execution Patterns
+id: 3b1d4834-c919-4710-8a1d-3917165cb9c0
+status: experimental
+description: Detects multiple suspicious behaviors associated with EtherRAT and its SYS_INFO module, including indirect execution via pcalua.exe,
+  obfuscated tar extraction, headless conhost proxying node.exe, WMI Antivirus discovery, CIS language checking, and node.exe execution from LocalAppData.
+author: RW
+references:
+  - https://www.esentire.com/blog/etherrat-sys-info-module-c2-on-ethereum-etherhiding-target-selection-cdn-like-beacons
+  - https://www.sysdig.com/blog/etherrat-dprk-uses-novel-ethereum-implant-in-react2shell-attacks
+date: 2026-04-13
+tags:
+  - attack.ta0002
+  - attack.t1218.011
+  - attack.ta0005
+  - attack.t1027
+  - attack.t1564.003
+  - attack.ta0007
+  - attack.t1518.001
+  - attack.t1614.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  # Detects obfuscated command lines used for initial staging
+  selection_obfuscation:
+    CommandLine|contains:
+      - 'p^c^a^l^u^a'
+      - 'ta""r'
+
+  # Detects indirect execution of mshta via Program Compatibility Assistant
+  selection_pcalua_proxy:
+    ParentImage|endswith: '\pcalua.exe'
+    Image|endswith: '\mshta.exe'
+
+  # Detects proxy execution of node.js via hidden conhost window (persistence/execution)
+  selection_headless_conhost:
+    CommandLine|contains|all:
+      - 'conhost.exe'
+      - '--headless'
+      - 'node.exe'
+
+  # Detects Antivirus discovery via WMI queries
+  selection_discovery_av:
+    CommandLine|contains|all:
+      - 'Get-CimInstance'
+      - 'root/SecurityCenter2'
+      - 'AntivirusProduct'
+
+  # Detects geographic targeting via CIS locale language checks
+  selection_discovery_locale:
+    CommandLine|contains: '[System.Globalization.CultureInfo]::InstalledUICulture.Name'
+
+  # Detects execution of node.exe from suspicious LocalAppData paths
+  selection_node_appdata:
+    Image|contains: '\AppData\Local\'
+    Image|endswith: '\node.exe'
+
+  # Note: 'node.exe' running from AppData can cause false positives with Electron apps (e.g., Discord).
+  # Expand this filter list to tune out legitimate node.exe executions in your environment.
+  filter_node_appdata:
+    Image|contains:
+      - '\AppData\Local\Programs\Microsoft VS Code\'
+      - '\AppData\Local\Discord\'
+      - '\AppData\Local\GitHubDesktop\'
+  condition: selection_obfuscation or selection_pcalua_proxy or selection_headless_conhost or selection_discovery_av or selection_discovery_locale or (selection_node_appdata and not filter_node_appdata)
+falsepositives:
+  - Legitimate administrative scripts retrieving WMI class information.
+  - Legitimate automated build tools extracting files using tar.
+  - Electron-based applications executing Node.js from AppData (requires tuning).
+level: high

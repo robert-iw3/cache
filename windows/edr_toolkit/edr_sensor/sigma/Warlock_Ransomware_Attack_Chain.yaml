@@ -1,0 +1,66 @@
+title: Warlock Ransomware Attack Chain Execution
+id: 823d427b-222d-40b4-85ed-1e2047761cb3
+status: experimental
+description: Detects command-line behaviors associated with the Warlock ransomware group's attack chain, including TightVNC installation,
+  Yuze proxy execution, BYOVD defense evasion, renamed Rclone exfiltration, and ransomware payload execution.
+author: RW
+references:
+  - https://www.trendmicro.com/en_us/research/26/c/dissecting-a-warlock-attack.html
+date: 2026-04-13
+tags:
+  - attack.execution
+  - attack.t1218.011
+  - attack.lateral-movement
+  - attack.t1021.001
+  - attack.command-and-control
+  - attack.t1095
+  - attack.defense-evasion
+  - attack.t1562.001
+  - attack.exfiltration
+  - attack.t1048.003
+  - attack.impact
+  - attack.t1486
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  # TightVNC silent installation flags for persistent lateral movement.
+  # If legitimate automated deployments trigger this, consider filtering by ParentImage (e.g., exclude legitimate management agents).
+  selection_tightvnc:
+    CommandLine|contains|all:
+      - 'SERVER_REGISTER_AS_SERVICE=1'
+      - 'SERVER_ADD_FIREWALL_EXCEPTION=1'
+
+  # Execution of the Yuze open-source tunneling tool.
+  selection_yuze:
+    CommandLine|contains|all:
+      - 'yuze.dll,RunYuze'
+      - 'reverse'
+
+  # Creation of the vulnerable NSecKrnl service for BYOVD defense evasion.
+  selection_nsec:
+    CommandLine|contains|all:
+      - 'sc '
+      - 'create '
+      - 'NSecKrnl'
+
+  # Rclone disguised as Trend Micro security tools.
+  selection_rclone_exe:
+    CommandLine|contains:
+      - 'TrendFileSecurityCheck.exe'
+      - 'TrendSecurity.exe'
+
+  # Exfiltration to S3 buckets flag.
+  selection_rclone_flag:
+    CommandLine|contains:
+      - ':s3:'
+
+  # Warlock encryption payload execution.
+  selection_payload:
+    CommandLine|contains:
+      - 'run.dll,RunCryptor'
+  condition: selection_tightvnc or selection_yuze or selection_nsec or (selection_rclone_exe and selection_rclone_flag) or selection_payload
+falsepositives:
+  - Legitimate administrative deployments of TightVNC may use the specified installation flags. These can usually be filtered out by identifying the legitimate software deployment parent process.
+  - False positives for the Yuze proxy, NSecKrnl BYOVD, and RunCryptor components are highly unlikely as they are highly specific to threat actor activity.
+level: high

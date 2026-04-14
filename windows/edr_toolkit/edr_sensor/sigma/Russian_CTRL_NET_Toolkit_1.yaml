@@ -1,0 +1,23 @@
+title: Russian CTRL .NET Toolkit - Process and IPC Execution
+id: cd787eb7-c940-46f6-a0e1-f86002a5696d-1
+status: experimental
+description: Detects execution, scheduled task creation, and specific Named Pipes associated with the Russian CTRL .NET toolkit.
+author: RW
+date: 2026-04-13
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_cmd:
+    CommandLine|contains:
+      - 'DriverSvcTask'
+      - 'NetTcpSvc'
+      - 'TermSvcHost'
+      - 'WindowsHealthMonitor'
+      - 'takeown * termsrv.dll'
+  selection_exe:
+    Image|endswith: '\ProgramData\SystemTools\ctrl.exe'
+  selection_pipe:
+    CommandLine|contains: '\ctrlPipe' # Captured via the enriched FileIOCreate named pipe logic
+  condition: 1 of selection_*
+level: high

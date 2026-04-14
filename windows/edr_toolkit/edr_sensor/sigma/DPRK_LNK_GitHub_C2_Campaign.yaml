@@ -1,0 +1,59 @@
+title: DPRK-Linked LNK and GitHub C2 Campaign Execution
+id: d10c1689-3f92-4bbe-9298-3de575dda888
+status: experimental
+description: Detects command line patterns associated with a DPRK-related campaign leveraging LNK files and GitHub for C2.
+  This includes PowerShell anti-analysis process checks, scheduled task persistence using hidden wscript, and communication
+  with a specific malicious GitHub repository or hardcoded token.
+author: RW
+references:
+  - https://www.fortinet.com/blog/threat-research/dprk-related-campaigns-with-lnk-and-github-c2
+date: 2026-04-13
+tags:
+  - attack.defense-evasion
+  - attack.persistence
+  - attack.command-and-control
+  - attack.t1518.001
+  - attack.t1053.005
+  - attack.t1102.002
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_ps:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+
+  # Focuses on specific anti-analysis process names checked by the malware.
+  # Tune by excluding known legitimate administrator or developer scripts if false positives arise.
+  selection_anti_analysis:
+    CommandLine|contains:
+      - 'vmxnet'
+      - 'vmusrvc'
+      - 'idaq'
+      - 'wireshark'
+      - 'x64dbg'
+      - 'de4dot'
+      - 'lordpe'
+      - 'hookexplorer'
+
+  # Detects the specific persistence mechanism establishing a scheduled task for a hidden VBScript.
+  # May require tuning to filter out legitimate administrative scheduled tasks involving wscript.exe.
+  selection_persistence:
+    CommandLine|contains|all:
+      - 'Register-ScheduledTask'
+      - 'wscript.exe'
+      - 'Hidden'
+
+  # Specific IOCs from the DPRK campaign leveraging GitHub C2.
+  selection_c2:
+    CommandLine|contains:
+      - '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'
+      - 'api.github.com/repos/motoralis'
+      - 'raw.githubusercontent.com/motoralis'
+
+  condition: (selection_ps and (selection_anti_analysis or selection_persistence)) or selection_c2
+falsepositives:
+  - Legitimate administrative scripts automating VBScript execution via scheduled tasks.
+  - Legitimate developer scripts checking for the presence of analysis or debugging tools.
+level: high

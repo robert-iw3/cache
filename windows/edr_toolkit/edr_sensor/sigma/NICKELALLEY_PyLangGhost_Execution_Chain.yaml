@@ -1,0 +1,63 @@
+title: NICKEL ALLEY Contagious Interview PyLangGhost Execution Chain
+id: 0cadf5d8-9410-42d3-aaeb-f7b2a24b04d4
+status: experimental
+description: Detects execution behaviors associated with NICKEL ALLEY (North Korea) fake job interview campaigns.
+  This includes the 'ClickFix' curl/powershell/wscript command chain, extraction of the benign support archive 'Lib.zip'
+  using the native tar utility, and the execution of driver-themed Python scripts (PyLangGhost RAT) via a renamed Python interpreter (e.g., csshost.exe).
+author: RW
+references:
+  - https://www.sophos.com/en-us/blog/nickel-alley-strategy-fake-it-til-you-make-it
+date: 2026-04-13
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.t1059.003
+  - attack.t1059.005
+  - attack.defense-evasion
+  - attack.t1036.003
+  - attack.t1140
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  # Detects the initial ClickFix command pasting execution
+  selection_clickfix:
+    CommandLine|contains|all:
+      - 'curl '
+      - 'powershell '
+      - 'Expand-Archive '
+      - 'wscript '
+      - '%TEMP%\'
+
+  # Detects VBScript payload extracting the Python environment zip
+  # FP Tuning: If legitimate development tools or CI/CD pipelines legitimately extract an archive named 'Lib.zip', filter by expected ParentImage or explicit working directories.
+  selection_tar_extract:
+    CommandLine|contains|all:
+      - 'tar '
+      - '-xf '
+      - 'Lib.zip'
+
+  # Detects specific renamed python interpreter running PyLangGhost
+  selection_pylangghost_explicit:
+    Image|endswith: '\csshost.exe'
+    CommandLine|contains:
+      - ' nvidia.py'
+      - ' audiodriver.py'
+
+  # Catch-all for renamed python interpreters running known malicious scripts
+  # FP Tuning: If third-party software bundles python with a custom executable name and uses scripts named 'nvidia.py' or 'audiodriver.py', add a filter for that specific Image path.
+  selection_pylangghost_generic:
+    CommandLine|contains:
+      - ' nvidia.py'
+      - ' audiodriver.py'
+  filter_python_legit:
+    Image|endswith:
+      - '\python.exe'
+      - '\pythonw.exe'
+      - '\py.exe'
+
+  condition: selection_clickfix or selection_tar_extract or selection_pylangghost_explicit or (selection_pylangghost_generic and not filter_python_legit)
+falsepositives:
+  - Rare instances of a legitimate archive named 'Lib.zip' being extracted via the native tar command in automated developer tasks.
+  - Highly unlikely false positive rate for the ClickFix curl/powershell/wscript chain.
+level: high

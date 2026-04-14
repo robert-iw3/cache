@@ -1,0 +1,60 @@
+title: Kimsuky Python Backdoor LNK Campaign Execution Patterns
+id: 8c260796-9a67-435f-ba6b-a7d21df8920f
+status: experimental
+description: Detects multiple execution patterns, specific anomalous paths, and command lines associated with the Kimsuky threat group's Python-based backdoor campaign.
+  This includes suspicious WScript/CScript execution from disguised directories, AV enumeration via WMI, specific scheduled task names, and secondary payload execution.
+author: RW
+references:
+  - https://asec.ahnlab.com/en/93151/
+date: 2026-04-13
+tags:
+  - attack.t1059.005
+  - attack.t1059.003
+  - attack.t1059.004
+  - attack.t1518.001
+  - attack.t1053.005
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  # Detects WScript or CScript executing intermediate scripts from known Kimsuky staging directories
+  selection_scripts:
+    Image|endswith:
+      - '\wscript.exe'
+      - '\cscript.exe'
+    CommandLine|contains:
+      - 'C:\windirr\'
+      - 'C:\Users\Public\Music\'
+
+  # Detects PowerShell querying WMI for installed AV products.
+  # Note: May require tuning if legitimate admin scripts perform similar checks.
+  selection_av_enum:
+    CommandLine|contains|all:
+      - 'SecurityCenter2'
+      - 'AntivirusProduct'
+
+  # Detects execution of the final Python backdoor from the anomalous C:\winii directory
+  selection_python:
+    Image|endswith:
+      - '\python.exe'
+      - '\pythonw.exe'
+    CommandLine|contains: 'C:\winii\'
+
+  # Detects execution of batch scripts used to decompress downloaded ZIP payloads
+  selection_bat:
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - '/c'
+      - 'C:\Users\Public\Music\'
+      - '.bat'
+
+  # Detects command lines containing the exact scheduled task names used for persistence
+  selection_tasks:
+    CommandLine|contains:
+      - 'GoogleUpdateTaskMachineCGI__'
+      - 'GoogleExtension{02-2032121-098}'
+  condition: 1 of selection_*
+falsepositives:
+  - Legitimate administrative scripts might query WMI for AntivirusProduct status, which could trigger the selection_av_enum logic. Exclude known administrative script paths or parent processes if false positives occur.
+  - Other highly specific paths (e.g., C:\windirr\, C:\winii\) and task names are very unlikely to cause false positives.
+level: high

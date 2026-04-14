@@ -1,0 +1,19 @@
+title: Russian CTRL .NET Toolkit - Registry Tampering
+id: cd787eb7-c940-46f6-a0e1-f86002a5696d-2
+status: experimental
+description: Detects UAC bypass preparation and hidden user account creation via the registry.
+author: RW
+date: 2026-04-13
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_uac:
+    TargetObject|contains: '\Software\Classes\ms-settings\Shell\Open\command'
+  selection_hidden_users:
+    TargetObject|endswith:
+      - '\SpecialAccounts\UserList\Admin'
+      - '\SpecialAccounts\UserList\Administrator'
+      - '\SpecialAccounts\UserList\Windows'
+  condition: 1 of selection_*
+level: high

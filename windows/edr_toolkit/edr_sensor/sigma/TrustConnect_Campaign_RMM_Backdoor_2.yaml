@@ -1,0 +1,14 @@
+title: TrustConnect Campaign RMM Backdoor - Registry Persistence
+id: c400a8b1-8051-455f-9025-633bf9c72457-2
+status: experimental
+description: Detects the TrustConnectAgent Run key used for reboot persistence.
+author: RW
+date: 2026-04-13
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_registry:
+    TargetObject|contains: '\Run\TrustConnectAgent'
+  condition: selection_registry
+level: high

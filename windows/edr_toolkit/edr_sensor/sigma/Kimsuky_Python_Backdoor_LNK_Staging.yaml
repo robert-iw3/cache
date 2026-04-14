@@ -1,0 +1,14 @@
+title: Kimsuky Python Backdoor - Data Staging File Creation
+id: 8c260796-9a67-435f-ba6b-a7d21df8920f-file
+status: experimental
+description: Detects the creation or modification of the specific tmp.ini file used by Kimsuky to stage stolen system information.
+author: RW
+date: 2026-04-13
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_file:
+    TargetFilename|endswith: '\Users\Public\Documents\tmp.ini'
+  condition: selection_file
+level: high

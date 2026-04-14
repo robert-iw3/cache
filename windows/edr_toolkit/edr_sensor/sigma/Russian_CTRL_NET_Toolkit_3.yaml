@@ -1,0 +1,19 @@
+title: Russian CTRL .NET Toolkit - File Artifacts
+id: cd787eb7-c940-46f6-a0e1-f86002a5696d-3
+status: experimental
+description: Detects known keylogger drops, update scripts, and RDP wrapper paths.
+author: RW
+date: 2026-04-13
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_files:
+    TargetFilename|endswith:
+      - '\Temp\keylog.txt'
+      - '\Temp\win_update.vbs'
+      - '\ProgramData\SystemTools\ctrl.exe'
+  selection_rdp:
+    TargetFilename|contains: '\Program Files\RDP Wrapper\'
+  condition: 1 of selection_*
+level: high
