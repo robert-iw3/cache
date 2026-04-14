@@ -101,6 +101,8 @@ pub struct BehavioralEngine {
     regex_hex: Regex,
     regex_num: Regex,
     regex_temp: Regex,
+    regex_pipe: Regex,
+    regex_hash: Regex,
 }
 
 impl BehavioralEngine {
@@ -148,6 +150,8 @@ impl BehavioralEngine {
             regex_hex: Regex::new(r"(?i)\b0x[0-9a-f]+\b").unwrap(),
             regex_num: Regex::new(r"\b\d{6,}\b").unwrap(),
             regex_temp: Regex::new(r"(?i)c:\\users\\[^\\]+\\appdata\\local\\temp\\[^\\]+").unwrap(),
+            regex_pipe: Regex::new(r"(?i)\\\\.\\pipe\\[\w.-]+").unwrap(),
+            regex_hash: Regex::new(r"(?i)\b[a-f0-9]{16,64}\b").unwrap(),
         };
 
         engine.load_baselines();
@@ -204,6 +208,8 @@ impl BehavioralEngine {
         clean = self.regex_hex.replace_all(&clean, "<HEX>").to_string();
         clean = self.regex_num.replace_all(&clean, "<NUM>").to_string();
         clean = self.regex_temp.replace_all(&clean, "<TEMP>").to_string();
+        clean = self.regex_pipe.replace_all(&clean, "<PIPE>").to_string();
+        clean = self.regex_hash.replace_all(&clean, "<HASH>").to_string();
 
         let raw_context = format!("{}|{}|{}|{}", parent, process, clean, rule).to_lowercase();
         let hash = hex::encode(Md5::digest(raw_context.as_bytes()));

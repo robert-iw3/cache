@@ -126,6 +126,30 @@ try {
 
 [Console]::SetCursorPosition(0, 9)
 
+# Disable Windows QuickEdit Mode to prevent accidental process freezing
+$QuickEditCode = @"
+using System;
+using System.Runtime.InteropServices;
+public class ConsoleConfig {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+    public static void DisableQuickEdit() {
+        IntPtr consoleHandle = GetStdHandle(-10); // STD_INPUT_HANDLE
+        if (GetConsoleMode(consoleHandle, out uint consoleMode)) {
+            consoleMode &= ~0x0040U; // Strip ENABLE_QUICK_EDIT_MODE
+            SetConsoleMode(consoleHandle, consoleMode);
+        }
+    }
+}
+"@
+Add-Type -TypeDefinition $QuickEditCode
+[ConsoleConfig]::DisableQuickEdit()
+
 # ====================== DIAGNOSTICS & TAMPER GUARD ======================
 $LogDir = Join-Path $env:ProgramData "DeepSensor\Logs"
 $DiagLogPath = Join-Path $LogDir "DeepSensor_Diagnostic.log"
@@ -899,7 +923,18 @@ try {
                                     $MitreTag = $matches[1]
                                 }
 
-                                $logObj = "{$global:EnrichmentPrefix" +
+                                # Generate SIEM-specific context
+                                $EventGuid = [guid]::NewGuid().ToString()
+                                $TimeLocal = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
+                                $TimeUTC   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                                $Action    = if ($global:ArmedMode) { "Quarantined" } else { "Logged" }
+
+                                $logObj = "{" +
+                                    "`"EventID`":`"$EventGuid`", " +
+                                    "`"Timestamp_Local`":`"$TimeLocal`", " +
+                                    "`"Timestamp_UTC`":`"$TimeUTC`", " +
+                                    "`"Action`":`"$Action`", " +
+                                    $global:EnrichmentPrefix +
                                     "`"Category`":`"ValidatedAlert`", " +
                                     "`"Mitre`":`"$MitreTag`", " +
                                     "`"Type`":`"ThreatDetection`", " +
@@ -910,7 +945,6 @@ try {
                                     "`"TID`":$($alert.tid), " +
                                     "`"Score`":$([math]::Round($alert.score, 2)), " +
                                     "`"Severity`":`"$($alert.severity)`", " +
-                                    "`"Confidence`":$($alert.confidence), " +
                                     "`"Details`":`"$($alert.reason)`"}"
 
                                 $script:logBatch.Add($logObj)

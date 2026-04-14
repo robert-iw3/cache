@@ -41,6 +41,14 @@
 34. **Pre-Flight Posture & Attack Surface Sweeping:** Implemented the `Invoke-EnvironmentalAudit` function to evaluate LSASS PPL protection, exposed RDP registry keys, and WMI Hijacking vectors natively during sensor initialization.
 35. **SQLite WAL Tuning Implemented:** Transitioned the ML temporal baselining engine to an immediate WAL-flush execution with `PRAGMA synchronous = NORMAL;`, ensuring high-speed I/O resilience and total data retention across sudden teardowns.
 36. **FFI Synchronized Teardown Secured:** Orchestrated a clean teardown handshake where C# drains the `BlockingCollection` via `CompleteAdding()`, waits for the consumer thread to exit, and safely invokes the `teardown_engine()` Rust method before unloading the DLL.
+37. **4-Tier Deterministic Filtering Funnel Established:** Architected a multi-layered noise reduction pipeline balancing max visibility with zero-latency drops:
+    * *Tier 1: Immutable Lineages* (C# perimeter dropping impossible attack paths like `wininit.exe -> services.exe`).
+    * *Tier 2: Surgical Fingerprinting* (C# perimeter dropping known structured developer telemetry).
+    * *Tier 3: Contextual Engine* (Rust ML mapping Parent->Child tuples and ignoring JSON formats for T1027).
+    * *Tier 4: Temporal UEBA* (Rust feedback loop permanently suppressing administrative rhythms).
+38. **AV-Safe Telemetry Validation:** Deployed `Invoke-SafeSensorTest.ps1` to successfully bypass static AV scanners (Defender/Trend Micro) and validate the sensor's behavioral detection efficacy against LotL simulations (Procdump, Named Pipes, Burst I/O).
+39. **Cross-Boundary MITRE ATT&CK Mapping:** Standardized MITRE tag extraction across both C# ETW anomalies and native Rust overrides utilizing advanced Regex fallbacks for high-fidelity SIEM enrichment.
+40. **Full FFI Context Enrichment:** Completely restructured the `Alert` payload schema to pipe the `ParentProcess` and full `CommandLine` through the entire C# -> Rust -> PowerShell stack to instantly contextualize alerts.
 
 ---
 
@@ -65,6 +73,21 @@
 * **Defect:** `DeepSensor_Events.jsonl` was flooded with alerts even after the Rust engine flagged the rule as `SUPPRESSED`.
 * **Root Cause:** C# was injecting a generic `AdvancedDetection` title instead of the actual rule name, causing a parsing mismatch in Rust. Additionally, C# was blindly forwarding events to the SIEM log before checking the UEBA suppression state.
 * **Resolution:** Implemented a new `SuppressedProcessRules` ConcurrentDictionary in `OsSensor.cs`. When Rust emits a `-1.0` score, PowerShell extracts the exact Sigma rule name and pushes it to the unmanaged C# dictionary, dropping all future noise at the absolute perimeter.
+
+#### **Phase 19: The "Compounding Infinity" Entropy Bug**
+* **Defect:** The Ransomware Burst tracker triggered infinitely on benign I/O, generating mathematically impossible entropy scores exceeding 240+.
+* **Root Cause:** The event `count` tracker was resetting upon alert generation, but the `entropy_sum` variable was not. The average entropy compounded infinitely on every subsequent file operation, permanently locking the process into a high-severity state.
+* **Resolution:** Hard-reset both `tracker.count` and `tracker.entropy_sum` upon alert threshold generation inside `lib.rs` to break the compounding math loop.
+
+#### **Phase 20: UEBA Routing Disconnect (The Missing Logs)**
+* **Defect:** UEBA diagnostic logs failed to generate, and false positives bypassed baselining entirely.
+* **Root Cause:** In the C# JSON enrichment refactor, legacy category strings were updated to granular labels (e.g., `Sigma_Match`, `T1562.001`). The Rust UEBA gatekeeper was still hardcoded to look only for `evt.category == "StaticAlert"`, causing all enriched events to drop out of the learning loop.
+* **Resolution:** Inverted the Rust evaluation gate to process all orchestrated alerts (`if evt.category != "RawEvent"`), instantly restoring temporal baselining and log generation for all Sigma/TTP hits.
+
+#### **Phase 21: C# RAM Compiler Initialization Blocks**
+* **Defect:** The sensor threw fatal CS1501 and CS1061 errors upon booting, preventing the RAM compiler from injecting the C# payload.
+* **Root Cause:** Scattered legacy `EnqueueAlert` ETW calls were missing the newly added `ParentProcess` and `CommandLine` signature requirements. Furthermore, `ConcurrentDictionary` syntax failed under `Add-Type` instantiation due to missing `.Add()` methods.
+* **Resolution:** Upgraded all 7 legacy `EnqueueAlert` occurrences to the 9-argument context format and wrapped the `BenignLineages` initialization within a standard `Dictionary` constructor for clean memory compilation.
 
 ---
 
