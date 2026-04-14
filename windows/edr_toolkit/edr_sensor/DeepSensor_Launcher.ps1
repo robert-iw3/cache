@@ -103,6 +103,9 @@ if ($ArmedMode) {
 $ScriptDir = Split-Path $PSCommandPath -Parent
 
 $script:logBatch = [System.Collections.Generic.List[string]]::new()
+# Dedicated UEBA JSONL pipeline
+$script:uebaBatch = [System.Collections.Generic.List[string]]::new()
+$UebaLogPath = $LogPath -replace "DeepSensor_Events.jsonl", "DeepSensor_UEBA_Events.jsonl"
 
 # ====================== CONSOLE UI & BUFFER SETUP ======================
 $Host.UI.RawUI.BackgroundColor = 'Black'
@@ -386,16 +389,29 @@ $global:TotalMitigations = 0
 function Invoke-ActiveDefense([string]$ProcName, [int]$PID_Id, [int]$TID_Id, [string]$TargetType, [string]$Reason) {
     if (-not $global:IsArmed -or $ProcName -match "Unknown|System|Idle") { return }
 
-    $yaraMatch = [DeepVisibilitySensor]::NeuterAndDumpPayload($PID_Id, 0, 4096)
-    $containmentStatus = "Failed"
+    # 1. THE ANTI-BSOD & BUSINESS CONTINUITY GATEKEEPER
+    $BSOD_Risks = @("csrss.exe", "lsass.exe", "smss.exe", "services.exe", "wininit.exe", "winlogon.exe", "svchost.exe", "dwm.exe", "explorer.exe")
+    if ($BSOD_Risks -contains $ProcName.ToLower()) {
+        Write-Diag "[ACTIVE DEFENSE] Skipped termination of $ProcName to prevent OS BSOD." "WARNING"
+        Add-AlertMessage "DEFENSE ABORTED: OS Critical Process ($ProcName)" "$([char]27)[95;40m"
+        return
+    }
 
+    $containmentStatus = "Failed"
+    $forensicArtifact = "None"
+
+    # 2. FORENSIC PRESERVATION
+    $dumpPath = [DeepVisibilitySensor]::PreserveForensics($PID_Id, $ProcName)
+    if ($dumpPath -ne "Failed" -and $dumpPath -ne "AccessDenied" -and $dumpPath -ne "Bypassed") {
+        $forensicArtifact = $dumpPath
+    }
+
+    # 3. CONTAINMENT EXECUTION (Prefer Thread Quarantine for safe rollback)
     if ($TargetType -eq "Thread" -and $TID_Id -gt 0) {
         $res = [DeepVisibilitySensor]::QuarantineNativeThread($TID_Id, $PID_Id)
         if ($res) {
             $containmentStatus = "Thread ($TID_Id) Quarantined"
             $global:TotalMitigations++
-            $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"QuarantineNativeThread`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"YaraAttribution`":`"$yaraMatch`"}"
-            $script:logBatch.Add($audit)
         }
     }
     else {
@@ -403,11 +419,64 @@ function Invoke-ActiveDefense([string]$ProcName, [int]$PID_Id, [int]$TID_Id, [st
         if (-not (Get-Process -Id $PID_Id -ErrorAction SilentlyContinue)) {
             $containmentStatus = "Process ($PID_Id) Terminated"
             $global:TotalMitigations++
-            $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"Stop-Process`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"YaraAttribution`":`"$yaraMatch`"}"
-            $script:logBatch.Add($audit)
         }
     }
-    Add-AlertMessage "DEFENSE: $containmentStatus ($ProcName -> $Reason | YARA: $yaraMatch)" "$([char]27)[93;40m"
+
+    # 4. INCIDENT REPORTING
+    $ReportDir = "C:\ProgramData\DeepSensor\Data\Reports"
+    if (-not (Test-Path $ReportDir)) { New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null }
+    $ReportId = [guid]::NewGuid().ToString().Substring(0,8)
+
+    $IncidentReport = @{
+        IncidentID = $ReportId
+        Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Process = $ProcName
+        PID = $PID_Id
+        TID = $TID_Id
+        TriggerReason = $Reason
+        ActionTaken = $containmentStatus
+        ForensicsSavedAt = $forensicArtifact
+    }
+    $IncidentReport | ConvertTo-Json -Depth 4 | Out-File "$ReportDir\Incident_${ReportId}.json"
+
+    $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"$containmentStatus`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"ReportID`":`"$ReportId`"}"
+    $script:logBatch.Add($audit)
+
+    Add-AlertMessage "DEFENSE: $containmentStatus ($ProcName)" "$([char]27)[93;40m"
+}
+
+function Invoke-DefenseRollback {
+    Write-Host "`n[!] INITIATING ACTIVE DEFENSE ROLLBACK..." -ForegroundColor Cyan
+
+    # 1. Lift Host Isolation (Firewall)
+    try {
+        Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction NotConfigured -DefaultOutboundAction NotConfigured -ErrorAction Stop
+        Remove-NetFirewallRule -DisplayName "DeepSensor_Safe_Uplink" -ErrorAction SilentlyContinue
+        Write-Diag "[ROLLBACK] Network Host Isolation lifted." "INFO"
+        Add-AlertMessage "ROLLBACK: Network Isolation Lifted" "$([char]27)[96;40m"
+    } catch { Write-Diag "[ROLLBACK] Network restore failed: $($_.Exception.Message)" "ERROR" }
+
+    # 2. Look for recently suspended threads in our audit log and resume them
+    # Note: In a full enterprise UI, you would select the specific TID. Here we use a safe heuristic for the last action.
+    $LastSuspendedTid = 0
+    # Search backwards through the log batch for the last quarantined thread
+    for ($i = $script:logBatch.Count - 1; $i -ge 0; $i--) {
+        if ($script:logBatch[$i] -match "`"Action`":`"Thread \((\d+)\) Quarantined`"") {
+            $LastSuspendedTid = [int]$matches[1]
+            break
+        }
+    }
+
+    if ($LastSuspendedTid -gt 0) {
+        $res = [DeepVisibilitySensor]::ResumeNativeThread($LastSuspendedTid)
+        if ($res) {
+            Write-Diag "[ROLLBACK] Successfully resumed Native Thread $LastSuspendedTid." "INFO"
+            Add-AlertMessage "ROLLBACK: Thread $LastSuspendedTid Resumed" "$([char]27)[96;40m"
+        }
+    } else {
+        Add-AlertMessage "ROLLBACK: No suspended threads found in active queue." "$([char]27)[90;40m"
+    }
+    Start-Sleep -Seconds 2
 }
 
 # ====================== HUD DASHBOARD RENDERING ======================
@@ -514,9 +583,9 @@ function Draw-Dashboard([long]$Events, [long]$MlEvals, [int]$Alerts, [string]$Et
     Write-Host "$cCyan║$cReset  OS Events Parsed : $cCyan$evPad$cReset | Active Alerts    : $cRed$alertPad$cReset$PadStats1$cCyan║$cReset"
     Write-Host "$cCyan║$cReset  Native ML Evals  : $cYellow$mlPad$cReset | Defenses Fired   : $cYellow$defFiredPad$cReset$PadStats2$cCyan║$cReset"
     Write-Host "$cCyan║$cReset  ETW Sensor State : $EColor$tamperPad$cReset | ML Math Engine   : $MColor$mlHealthPad$cReset$PadTamper$cCyan║$cReset"
-    $ExitPlain = "  [ CTRL+C ] TO EXIT AND INITIATE TEARDOWN SEQUENCE"
-    $PadExit   = " " * [math]::Max(0, ($UIWidth - $ExitPlain.Length))
-    Write-Host "$cCyan║$cReset$cDark$ExitPlain$cReset$PadExit$cCyan║$cReset"
+    $ControlsPlain = "  [ I ] INJECT SIGMA  |  [ R ] ROLLBACK DEFENSE  |  [ CTRL+C ] TEARDOWN SENSOR"
+    $PadControls   = " " * [math]::Max(0, ($UIWidth - $ControlsPlain.Length))
+    Write-Host "$cCyan║$cReset$cDark$ControlsPlain$cReset$PadControls$cCyan║$cReset"
     Write-Host "$cCyan╚════════════════════════════════════════════════════════════════════════════════════════════════════╝$cReset"
 
     if ($curTop -lt 9) { $curTop = 9 }
@@ -533,12 +602,16 @@ function Sync-YaraIntelligence {
 
     $Sources = @(
         @{ Name = "ElasticLabs"; Url = "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"; SubPath = "protections-artifacts-main/yara" },
-        @{ Name = "ReversingLabs"; Url = "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/develop.zip"; SubPath = "reversinglabs-yara-rules-develop/yara" }
+        @{ Name = "ReversingLabs"; Url = "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/develop.zip"; SubPath = "reversinglabs-yara-rules-develop/yara" },
+        @{ Name = "SignatureBase_Neo23x0"; Url = "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"; SubPath = "signature-base-master/yara" }
     )
 
+    $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
+    if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
+
     foreach ($src in $Sources) {
-        $TempZip = "$env:TEMP\$($src.Name).zip"
-        $TempExt = "$env:TEMP\$($src.Name)_extract"
+        $TempZip = "$SecureStaging\$($src.Name).zip"
+        $TempExt = "$SecureStaging\$($src.Name)_extract"
 
         try {
             if ($OfflineRepoPath) {
@@ -627,11 +700,14 @@ function Get-CompiledSigmaBase64 {
         foreach ($line in $lines) {
             if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
 
+            # Extract Category to route to the correct C# Aho-Corasick Tree
             if ($line -match "(?i)category:\s*(.+)") {
                 $rawCat = $matches[1].Trim(" '`"").ToLower()
                 if ($rawCat -match "registry") { $category = "registry_event" }
                 elseif ($rawCat -match "file") { $category = "file_event" }
                 elseif ($rawCat -match "image") { $category = "image_load" }
+                elseif ($rawCat -match "network|connection") { $category = "network_connection" }
+                elseif ($rawCat -match "pipe") { $category = "pipe_created" }
                 else { $category = "process_creation" }
                 continue
             }
@@ -713,8 +789,11 @@ function Initialize-SigmaEngine {
     $LocalSigmaDir = Join-Path $ScriptDir "sigma"
     if (-not (Test-Path $LocalSigmaDir)) { New-Item -ItemType Directory -Path $LocalSigmaDir -Force | Out-Null }
 
-    $TempZipPath = "$env:TEMP\sigma_master.zip"
-    $ExtractPath = "$env:TEMP\sigma_extract"
+    $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
+    if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
+
+    $TempZipPath = "$SecureStaging\sigma_master.zip"
+    $ExtractPath = "$SecureStaging\sigma_extract"
 
     try {
         if ($OfflineRepoPath) {
@@ -784,6 +863,8 @@ function Initialize-SigmaEngine {
                 if ($rawCat -match "registry") { $category = "registry_event" }
                 elseif ($rawCat -match "file") { $category = "file_event" }
                 elseif ($rawCat -match "image") { $category = "image_load" }
+                elseif ($rawCat -match "network|connection") { $category = "network_connection" }
+                elseif ($rawCat -match "pipe") { $category = "pipe_created" }
                 else { $category = "process_creation" }
                 continue
             }
@@ -980,9 +1061,13 @@ try {
                 Write-Host "`n[!] Graceful shutdown initiated by user..." -ForegroundColor Yellow
                 break
             }
-            # Triggers dynamic reload from sigma_staging/
+            # 'I' for Staging Injection (Hot Reload)
             if ($keyInput.KeyChar -eq 'i' -or $keyInput.KeyChar -eq 'I') {
                 Invoke-StagingInjection
+            }
+            # 'R' for Active Defense Rollback
+            if ($keyInput.KeyChar -eq 'r' -or $keyInput.KeyChar -eq 'R') {
+                Invoke-DefenseRollback
             }
         }
 
@@ -1026,7 +1111,7 @@ try {
                                 Add-AlertMessage "GLOBAL SUPPRESSION: '$ruleName' pruned from Kernel." $cDark
                                 [DeepVisibilitySensor]::SuppressSigmaRule($ruleName)
                                 $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`"}"
-                                $script:logBatch.Add($logObj)
+                                $script:uebaBatch.Add($logObj)
                                 continue
                             }
 
@@ -1034,7 +1119,7 @@ try {
                             if ($alert.score -eq -1.0) {
                                 Add-AlertMessage $alert.reason $cDark
                                 $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
-                                $script:logBatch.Add($logObj)
+                                $script:uebaBatch.Add($logObj)
 
                                 # Extract the pure rule name from the Rust reason
                                 # Format: "UEBA SECURED: [T1547.001] RegPersistence | Mode: Automated Baseline."
@@ -1048,7 +1133,7 @@ try {
                             if ($alert.score -eq 0.0) {
                                 Add-AlertMessage "LEARNING: $($alert.reason)" $cDark
                                 $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"Learning`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
-                                $script:logBatch.Add($logObj)
+                                $script:uebaBatch.Add($logObj)
                                 continue
                             }
 
@@ -1134,15 +1219,21 @@ try {
                         Add-AlertMessage "$($evt.Type): $($evt.Details)" $cYellow
                     }
                 }
-                } catch {
+            } catch {
                 Write-Diag "DEQUEUE ERROR: $($_.Exception.Message)" "ERROR"
             }
         }
 
-        # BATCH SIEM FORWARDING
+        # BATCH SIEM FORWARDING (Actionable Alerts & Active Defense)
         if ($script:logBatch.Count -gt 0) {
             [System.IO.File]::AppendAllText($LogPath, ($script:logBatch -join "`r`n") + "`r`n")
             $script:logBatch.Clear()
+        }
+
+        # BATCH UEBA FORWARDING (Learning & Suppressions)
+        if ($script:uebaBatch.Count -gt 0) {
+            [System.IO.File]::AppendAllText($UebaLogPath, ($script:uebaBatch -join "`r`n") + "`r`n")
+            $script:uebaBatch.Clear()
         }
 
         # ETW HEALTH CANARY: Write a temp file every 60 seconds to prove the Kernel Listener is alive

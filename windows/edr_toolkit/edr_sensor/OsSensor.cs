@@ -82,10 +82,14 @@ public class DeepVisibilitySensor {
     private static ConcurrentDictionary<int, DateTime> ProcessStartTime = new ConcurrentDictionary<int, DateTime>();
     private static int SensorPid = -1;
 
-    public struct ModuleMap {
+    public struct ModuleMap : IComparable<ModuleMap> {
         public string ModuleName;
         public ulong BaseAddress;
         public ulong EndAddress;
+
+        public int CompareTo(ModuleMap other) {
+            return BaseAddress.CompareTo(other.BaseAddress);
+        }
     }
 
     // Dictionary to drop known benign Parent -> Child behaviors instantly at the C# boundary
@@ -121,7 +125,8 @@ public class DeepVisibilitySensor {
         StringComparer.OrdinalIgnoreCase
     );
 
-    private static ConcurrentDictionary<int, List<ModuleMap>> ProcessModules = new ConcurrentDictionary<int, List<ModuleMap>>();
+    // Uses Immutable Arrays for lock-free, O(1) read operations during StackWalks
+    private static ConcurrentDictionary<int, ModuleMap[]> ProcessModules = new ConcurrentDictionary<int, ModuleMap[]>();
     public static ConcurrentDictionary<string, byte> SuppressedSigmaRules = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
     public static void SuppressSigmaRule(string ruleName) {
@@ -227,8 +232,10 @@ public class DeepVisibilitySensor {
         }
     }
 
+    // EXHAUSTIVE ANTI-BSOD LIST: Touching these will cause system instability or immediate bugchecks
     private static readonly HashSet<string> CriticalSystemProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-        "csrss.exe", "lsass.exe", "smss.exe", "services.exe", "wininit.exe", "winlogon.exe", "system"
+        "csrss.exe", "lsass.exe", "smss.exe", "services.exe", "wininit.exe", "winlogon.exe", "system",
+        "svchost.exe", "dwm.exe", "explorer.exe", "lsaiso.exe", "fontdrvhost.exe", "spoolsv.exe", "taskhostw.exe"
     };
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -271,6 +278,9 @@ public class DeepVisibilitySensor {
         string procName = GetProcessName(pid);
         if (CriticalSystemProcesses.Contains(procName)) return yaraResult;
 
+        // Prevent malware from crashing the EDR via massive RWX heap sprays (Cap at 50MB)
+        if (size > 52428800) return "AllocationExceedsScanLimit";
+
         uint PROCESS_VM_READ_OPERATION = 0x0010 | 0x0008;
         IntPtr hProcess = OpenProcess(PROCESS_VM_READ_OPERATION, false, (uint)pid);
         if (hProcess == IntPtr.Zero) return "HandleAccessDenied";
@@ -279,13 +289,13 @@ public class DeepVisibilitySensor {
             byte[] buffer = new byte[size];
             if (ReadProcessMemory(hProcess, (IntPtr)address, buffer, (UIntPtr)size, out UIntPtr bytesRead)) {
                 yaraResult = EvaluatePayloadInMemory(buffer, procName);
-                string quarantineDir = @"C:\ProgramData\DeepSensor\Data\Quarantine";
-                System.IO.Directory.CreateDirectory(quarantineDir);
-                string dumpPath = $@"{quarantineDir}\Payload_{procName}_{pid}_0x{address:X}.bin";
-                System.IO.File.WriteAllBytes(dumpPath, buffer);
 
+                // Only write to disk if it actually matches a YARA rule to save I/O overhead
                 if (yaraResult != "NoSignatureMatch") {
-                    EnqueueAlert("T1059", "YaraPayloadAttribution", procName, "Unknown", pid, 0, 0, "", $"In-Memory Shellcode Identified As: {yaraResult}");
+                    string quarantineDir = @"C:\ProgramData\DeepSensor\Data\Quarantine";
+                    System.IO.Directory.CreateDirectory(quarantineDir);
+                    string dumpPath = $@"{quarantineDir}\Payload_{procName}_{pid}_0x{address:X}.bin";
+                    System.IO.File.WriteAllBytes(dumpPath, buffer);
                 }
             }
 
@@ -316,6 +326,21 @@ public class DeepVisibilitySensor {
             }
         } catch { } finally { CloseHandle(hProcess); }
         return "Failed";
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern uint ResumeThread(IntPtr hThread);
+
+    // ROLLBACK MECHANISM
+    public static bool ResumeNativeThread(int tid) {
+        uint THREAD_SUSPEND_RESUME = 0x0002;
+        IntPtr hThread = OpenThread(THREAD_SUSPEND_RESUME, false, (uint)tid);
+        if (hThread == IntPtr.Zero) return false;
+
+        uint resumeCount = ResumeThread(hThread);
+        CloseHandle(hThread);
+        // If resumeCount is > 0, it successfully decremented the suspension count
+        return (resumeCount != 0xFFFFFFFF);
     }
 
     private static readonly string[] MonitoredRegPaths = {
@@ -645,7 +670,16 @@ public class DeepVisibilitySensor {
         _session.Source.Kernel.ImageLoad += delegate (ImageLoadTraceData data) {
             if (data.ProcessID == SensorPid || data.ProcessID == 0) return;
             var map = new ModuleMap { ModuleName = data.FileName, BaseAddress = (ulong)data.ImageBase, EndAddress = (ulong)data.ImageBase + (ulong)data.ImageSize };
-            ProcessModules.AddOrUpdate(data.ProcessID, pid => new List<ModuleMap> { map }, (pid, list) => { lock (list) { list.Add(map); } return list; });
+
+            // Atomically replace with a sorted array for binary searching
+            ProcessModules.AddOrUpdate(data.ProcessID,
+                pid => new ModuleMap[] { map },
+                (pid, arr) => {
+                    var list = new List<ModuleMap>(arr);
+                    int index = list.BinarySearch(map);
+                    if (index < 0) list.Insert(~index, map);
+                    return list.ToArray();
+                });
 
             if (data.FileName.IndexOf(".sys", StringComparison.OrdinalIgnoreCase) >= 0 && data.ProcessID != 4) {
                 if (TiDrivers.Contains(System.IO.Path.GetFileName(data.FileName))) {
@@ -676,9 +710,19 @@ public class DeepVisibilitySensor {
             for (int i = 0; i < data.FrameCount; i++) {
                 ulong instructionPointer = data.InstructionPointer(i);
                 bool isBacked = false;
-                foreach (var mod in modules) {
-                    if (instructionPointer >= mod.BaseAddress && instructionPointer <= mod.EndAddress) { isBacked = true; break; }
+
+                // O(log N) Binary Search across the lock-free array
+                int left = 0, right = modules.Length - 1;
+                while (left <= right) {
+                    int mid = left + (right - left) / 2;
+                    if (instructionPointer >= modules[mid].BaseAddress && instructionPointer <= modules[mid].EndAddress) {
+                        isBacked = true;
+                        break;
+                    }
+                    if (instructionPointer < modules[mid].BaseAddress) right = mid - 1;
+                    else left = mid + 1;
                 }
+
                 if (!isBacked) {
                     unbackedFrames++;
                     if (IsForgedReturnAddress(data.ProcessID, instructionPointer)) forgedReturns++;
@@ -808,13 +852,27 @@ public class DeepVisibilitySensor {
         };
 
         _session.Source.Kernel.VirtualMemAlloc += delegate (VirtualAllocTraceData data) {
-            if ((int)data.Flags == 0x40) { // PAGE_EXECUTE_READWRITE
-                if (data.ProcessID == SensorPid) {
-                    bool neutralized = QuarantineNativeThread(data.ThreadID, data.ProcessID);
+            int flags = (int)data.Flags;
+
+            // Catch BOTH 0x40 (PAGE_EXECUTE_READWRITE) and 0x20 (PAGE_EXECUTE_READ)
+            // This captures the exact moment RW memory is transitioned to RX for execution
+            if (flags == 0x40 || flags == 0x20) {
+
+                // Do not scan our own memory allocations
+                if (data.ProcessID != SensorPid && data.ProcessID != 0) {
                     ulong baseAddr = Convert.ToUInt64(data.PayloadByName("BaseAddress"));
                     ulong regSize  = Convert.ToUInt64(data.PayloadByName("RegionSize"));
-                    NeuterAndDumpPayload(data.ProcessID, baseAddr, regSize);
-                    EnqueueAlert("T1562.001", "SensorTampering", "External Threat", "Unknown", data.ProcessID, 0, data.ThreadID, "", $"RWX Injection caught. Attacking Thread Quarantined: {neutralized}");
+
+                    // 1. Dump the specific RWX shellcode to disk
+                    // 2. Scan it with the Context-Aware YARA matrices
+                    // 3. Strip the memory of executable permissions (PAGE_NOACCESS)
+                    string yaraResult = NeuterAndDumpPayload(data.ProcessID, baseAddr, regSize);
+
+                    if (yaraResult != "NoSignatureMatch" && yaraResult != "HandleAccessDenied") {
+                        // We got a YARA hit! Quarantine the thread that injected it.
+                        bool neutralized = QuarantineNativeThread(data.ThreadID, data.ProcessID);
+                        EnqueueAlert("T1055", "YaraPayloadAttribution", GetProcessName(data.ProcessID), "Unknown", data.ProcessID, 0, data.ThreadID, "", $"YARA Hit: {yaraResult} | Thread Frozen: {neutralized}");
+                    }
                 }
             }
         };

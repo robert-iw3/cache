@@ -3,7 +3,9 @@
 **Developer Note (@RW):**
 Transitioning the ML and UEBA engine from Python to Rust was the definitive architectural move because it completely eliminated the inter-process communication (IPC) overhead that fundamentally bottlenecked the telemetry pipeline. In the Python implementation, every kernel event had to be serialized into a JSON string and piped across process boundaries, incurring a massive CPU tax and unpredictable garbage collection pauses. By compiling the Isolation Forest and temporal baselining logic into a native Rust DLL, we collapsed the architecture into a single, shared memory space accessed directly via C# FFI. This allowed the sensor to ingest micro-batches of events at wire-speed and leverage Rust's thread-safe concurrency to train the mathematical models asynchronously in the background, achieving a deterministic, zero-latency evaluation loop that Python's interpreted execution and Global Interpreter Lock (GIL) simply could not mathematically match under extreme load.
 
-**DISCLAIMER:** v3 will be a private project, this is to showcase that anyone can develop their own EDR and assist those creating similar projects.  Happy Hunting!
+**DISCLAIMER:** v3 will be a private project.
+
+This is a side project (minimal effort) primarily driven by curiosity for utilizing sigma/yara for detection with c# traces, and dabbling with basic ml/ueba integration.  This is not a complete EDR at the moment and serves as a companion sensor with defense in depth in mind.  Happy Hunting!
 
 ## Overview
 A **high-performance, real-time** Endpoint Detection and Response (EDR) sensor operating natively in-memory for Windows. This project bridges unmanaged C# Event Tracing for Windows (ETW) telemetry with a **Native Rust Machine Learning Engine (DLL)** to autonomously detect and neutralize evasive OS behaviors, zero-day persistence, and memory manipulation.
