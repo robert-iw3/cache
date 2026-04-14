@@ -22,6 +22,7 @@
  ********************************************************************************/
 
 using System;
+using System.IO;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using System.Threading;
@@ -65,7 +66,12 @@ public class DeepVisibilitySensor {
     public static long TotalAlertsGenerated = 0;
     public static long TotalMlEvals = 0;
 
-    // =====================================================================
+    public class SigmaRule
+    {
+        public string id { get; set; }
+        public string category { get; set; }
+        public string anchor_string { get; set; }
+    }
 
     public static ConcurrentQueue<string> EventQueue = new ConcurrentQueue<string>();
     private static libyaraNET.YaraContext _yaraContext;
@@ -148,6 +154,17 @@ public class DeepVisibilitySensor {
             } catch (Exception ex) {
                 EnqueueDiag($"[YARA] Failed to compile vector {vectorName}: {ex.Message}");
             }
+        }
+    }
+
+    public static bool IsYaraRuleValid(string filePath) {
+        try {
+            using (var compiler = new libyaraNET.Compiler()) {
+                compiler.AddRuleFile(filePath);
+                return true;
+            }
+        } catch {
+            return false;
         }
     }
 
@@ -324,13 +341,90 @@ public class DeepVisibilitySensor {
     private static HashSet<string> BenignADSProcesses     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static HashSet<string> TiDrivers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    private static string[] SigmaCmdKeys;
-    private static string[] SigmaCmdTitles;
-    private static string[] SigmaImgKeys;
-    private static string[] SigmaImgTitles;
+    // --- ATOMIC HOT RELOAD STATE ---
+    public class RuleMatrix
+    {
+        // 1. Process & Command Line Rules (category: process_creation)
+        public AhoCorasick AcProc = new AhoCorasick();
+        public Dictionary<int, SigmaRule> MapProc = new Dictionary<int, SigmaRule>();
 
-    private static AhoCorasick CmdAc;
-    private static AhoCorasick ImgAc;
+        // 2. Image Load / DLL Rules (category: image_load)
+        public AhoCorasick AcImg = new AhoCorasick();
+        public Dictionary<int, SigmaRule> MapImg = new Dictionary<int, SigmaRule>();
+
+        // 3. File Creation Rules (category: file_event)
+        public AhoCorasick AcFile = new AhoCorasick();
+        public Dictionary<int, SigmaRule> MapFile = new Dictionary<int, SigmaRule>();
+
+        // 4. Registry Modification Rules (category: registry_event)
+        public AhoCorasick AcReg = new AhoCorasick();
+        public Dictionary<int, SigmaRule> MapReg = new Dictionary<int, SigmaRule>();
+    }
+
+    public static void UpdateSigmaRules(string b64Rules)
+    {
+        try
+        {
+            RuleMatrix matrix = new RuleMatrix();
+            int procIdx = 0, imgIdx = 0, fileIdx = 0, regIdx = 0;
+
+            if (string.IsNullOrEmpty(b64Rules)) return;
+
+            byte[] data = Convert.FromBase64String(b64Rules);
+            string payload = System.Text.Encoding.UTF8.GetString(data);
+
+            if (string.IsNullOrEmpty(payload)) return;
+
+            string[] rules = payload.Split(new string[] { "[NEXT]" }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (string r in rules)
+            {
+                string[] parts = r.Split('|');
+                if (parts.Length < 3) continue;
+
+                string category = parts[0];
+                string id = parts[1];
+                string anchor = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[2]));
+
+                var rule = new SigmaRule { id = id, category = category, anchor_string = anchor };
+
+                switch (category.ToLowerInvariant())
+                {
+                    case "process_creation":
+                        matrix.AcProc.AddString(anchor.ToLowerInvariant());
+                        matrix.MapProc[procIdx++] = rule;
+                        break;
+                    case "image_load":
+                        matrix.AcImg.AddString(anchor.ToLowerInvariant());
+                        matrix.MapImg[imgIdx++] = rule;
+                        break;
+                    case "file_event":
+                        matrix.AcFile.AddString(anchor.ToLowerInvariant());
+                        matrix.MapFile[fileIdx++] = rule;
+                        break;
+                    case "registry_event":
+                    case "registry_set":
+                        matrix.AcReg.AddString(anchor.ToLowerInvariant());
+                        matrix.MapReg[regIdx++] = rule;
+                        break;
+                }
+            }
+
+            matrix.AcProc.Build();
+            matrix.AcImg.Build();
+            matrix.AcFile.Build();
+            matrix.AcReg.Build();
+
+            Interlocked.Exchange(ref _activeMatrix, matrix);
+            EnqueueDiag("[OS SENSOR] Rule Matrix Compiled: " + (procIdx + imgIdx + fileIdx + regIdx) + " active signatures.");
+        }
+        catch (Exception ex)
+        {
+            EnqueueDiag($"[OS SENSOR] Rule Compilation Failed - {ex.Message}");
+        }
+    }
+
+    private static RuleMatrix _activeMatrix = new RuleMatrix();
 
     [ThreadStatic]
     private static StringBuilder _jsonSb;
@@ -369,7 +463,7 @@ public class DeepVisibilitySensor {
 
     private static string _dllPath;
 
-    public static void Initialize(string dllPath, int currentPid, string[] tiDrivers, string[] sigmaCmdKeys, string[] sigmaCmdTitles, string[] sigmaImgKeys, string[] sigmaImgTitles, string[] benignExplorerValues, string[] benignADSProcs) {
+    public static void Initialize(string dllPath, int currentPid, string[] tiDrivers, string[] benignExplorerValues, string[] benignADSProcs) {
         _dllPath = dllPath;
         SensorPid = currentPid;
 
@@ -409,7 +503,7 @@ public class DeepVisibilitySensor {
             return null;
         };
 
-        UpdateThreatIntel(tiDrivers, sigmaCmdKeys, sigmaCmdTitles, sigmaImgKeys, sigmaImgTitles);
+        UpdateThreatIntel(tiDrivers);
 
         // Start the dedicated ML consumer thread with Micro-Batching
         _mlConsumerTask = Task.Factory.StartNew(() => {
@@ -450,23 +544,11 @@ public class DeepVisibilitySensor {
         }, _mlCancelSource.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
-    public static void UpdateThreatIntel(string[] tiDrivers, string[] sigmaCmdKeys, string[] sigmaCmdTitles, string[] sigmaImgKeys, string[] sigmaImgTitles) {
+    public static void UpdateThreatIntel(string[] tiDrivers)
+    {
         var newTi = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string driver in tiDrivers) { newTi.Add(driver); }
         TiDrivers = newTi;
-
-        SigmaCmdKeys = sigmaCmdKeys;
-        SigmaCmdTitles = sigmaCmdTitles;
-        SigmaImgKeys = sigmaImgKeys;
-        SigmaImgTitles = sigmaImgTitles;
-
-        var newCmdAc = new AhoCorasick();
-        newCmdAc.Build(SigmaCmdKeys);
-        CmdAc = newCmdAc;
-
-        var newImgAc = new AhoCorasick();
-        newImgAc.Build(SigmaImgKeys);
-        ImgAc = newImgAc;
     }
 
     public static void StartSession() {
@@ -513,22 +595,24 @@ public class DeepVisibilitySensor {
 
                             string dynamicPayload = sb.ToString().Trim().ToLowerInvariant();
                             if (dynamicPayload.Length > 5) {
-                                int cmdMatch = CmdAc.SearchFirst(dynamicPayload);
-                                if (cmdMatch >= 0) {
-                                    string fullTitle = SigmaCmdTitles[cmdMatch];
-                                    string cleanTitle = fullTitle;
-                                    int bracketIdx = fullTitle.IndexOf('[');
-                                    if (bracketIdx > 0) { cleanTitle = fullTitle.Substring(0, bracketIdx).Trim(); }
+                                var matrix = _activeMatrix; // Thread-safe reference
+                                int matchIdx = matrix.AcProc.SearchFirst(dynamicPayload);
 
+                                if (matchIdx >= 0 && matrix.MapProc.TryGetValue(matchIdx, out SigmaRule matchedRule)) {
                                     string procName = GetProcessName(data.ProcessID);
                                     if (string.IsNullOrWhiteSpace(procName) || procName == "0" || procName == "-1") {
                                         procName = data.ProviderName.Contains("WMI") ? "WMI_Activity" : "PowerShell_Host";
                                     }
 
-                                    string cacheKey = $"{procName}|{cleanTitle}";
-                                    // Check both Global Suppression and Process-Specific Suppression
-                                    if (!SuppressedSigmaRules.ContainsKey(cleanTitle) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
-                                        EnqueueAlert("Sigma_UserMode", "AdvancedDetection", procName, "Unknown", data.ProcessID, 0, data.ThreadID, dynamicPayload, $"Rule: {fullTitle}");
+                                    string cacheRuleName = matchedRule.id;
+                                    int bracketIdx = cacheRuleName.IndexOf('[');
+                                    if (bracketIdx >= 0) cacheRuleName = cacheRuleName.Substring(0, bracketIdx).Trim();
+
+                                    string cacheKey = $"{procName}|{cacheRuleName}";
+
+                                    if (!SuppressedSigmaRules.ContainsKey(cacheRuleName) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
+
+                                        EnqueueAlert("Sigma_UserMode", "AdvancedDetection", procName, "Unknown", data.ProcessID, 0, data.ThreadID, dynamicPayload, $"Rule: {matchedRule.id}");
                                     }
                                 }
                             }
@@ -568,6 +652,21 @@ public class DeepVisibilitySensor {
                     EnqueueAlert("T1562.001", "ThreatIntel_Driver", GetProcessName(data.ProcessID), "Unknown", data.ProcessID, 0, data.ThreadID, "", $"Known vulnerable driver loaded: {data.FileName}");
                 }
             }
+
+            var matrix = _activeMatrix;
+            int imgMatch = matrix.AcImg.SearchFirst(data.FileName);
+            if (imgMatch >= 0 && matrix.MapImg.TryGetValue(imgMatch, out SigmaRule rule)) {
+
+                string cacheRuleName = rule.id;
+                int bracketIdx = cacheRuleName.IndexOf('[');
+                if (bracketIdx >= 0) cacheRuleName = cacheRuleName.Substring(0, bracketIdx).Trim();
+
+                string cacheKey = $"{GetProcessName(data.ProcessID)}|{cacheRuleName}";
+
+                if (!SuppressedSigmaRules.ContainsKey(cacheRuleName) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
+                    EnqueueAlert("Sigma_Match", "ImageLoadDetection", GetProcessName(data.ProcessID), "Unknown", data.ProcessID, 0, data.ThreadID, data.FileName, $"Rule: {rule.id}");
+                }
+            }
         };
 
         _session.Source.Kernel.StackWalkStack += delegate (StackWalkStackTraceData data) {
@@ -604,15 +703,18 @@ public class DeepVisibilitySensor {
                     EnqueueAlert("T1562.002", "ETWTampering", image, GetProcessName(data.ParentID), data.ProcessID, data.ParentID, data.ThreadID, cmd, $"Attempted to terminate ETW: {cmd}");
                 }
 
-                int cmdMatch = CmdAc.SearchFirst(cmd);
-                if (cmdMatch >= 0) {
-                    string fullTitle = SigmaCmdTitles[cmdMatch];
-                    int bracketIdx = fullTitle.IndexOf('[');
-                    string cleanTitle = bracketIdx > 0 ? fullTitle.Substring(0, bracketIdx).Trim() : fullTitle;
+                var matrix = _activeMatrix;
+                int matchIdx = matrix.AcProc.SearchFirst(cmd);
 
-                    string cacheKey = $"{image}|{cleanTitle}";
-                    if (!SuppressedSigmaRules.ContainsKey(cleanTitle) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
-                        EnqueueAlert("Sigma_Match", "SigmaDetection", image, GetProcessName(data.ParentID), data.ProcessID, data.ParentID, data.ThreadID, cmd, $"Rule: {fullTitle}");
+                if (matchIdx >= 0 && matrix.MapProc.TryGetValue(matchIdx, out SigmaRule matchedRule)) {
+
+                    string cacheRuleName = matchedRule.id;
+                    int bracketIdx = cacheRuleName.IndexOf('[');
+                    if (bracketIdx >= 0) cacheRuleName = cacheRuleName.Substring(0, bracketIdx).Trim();
+                    string cacheKey = $"{image}|{cacheRuleName}";
+
+                    if (!SuppressedSigmaRules.ContainsKey(cacheRuleName) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
+                        EnqueueAlert("Sigma_Match", "SigmaDetection", image, GetProcessName(data.ParentID), data.ProcessID, data.ParentID, data.ThreadID, cmd, $"Rule: {matchedRule.id}");
                     }
                 }
 
@@ -651,6 +753,20 @@ public class DeepVisibilitySensor {
                 EnqueueAlert("T1547.001", "RegPersistence", procLower, "Unknown", data.ProcessID, 0, data.ThreadID, "", $"Persistence Key: {keyName}");
             }
 
+            var matrix = _activeMatrix;
+            int regMatch = matrix.AcReg.SearchFirst(searchText);
+            if (regMatch >= 0 && matrix.MapReg.TryGetValue(regMatch, out SigmaRule rule)) {
+
+                string cacheRuleName = rule.id;
+                int bracketIdx = cacheRuleName.IndexOf('[');
+                if (bracketIdx >= 0) cacheRuleName = cacheRuleName.Substring(0, bracketIdx).Trim();
+                string cacheKey = $"{procLower}|{cacheRuleName}";
+
+                if (!SuppressedSigmaRules.ContainsKey(cacheRuleName) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
+                    EnqueueAlert("Sigma_Match", "RegistryDetection", procLower, "Unknown", data.ProcessID, 0, data.ThreadID, searchText, $"Rule: {rule.id}");
+                }
+            }
+
             EnqueueRaw("RegistryWrite", GetProcessName(data.ProcessID), "", keyName, valueName, data.ProcessID, data.ThreadID);
         };
 
@@ -665,6 +781,21 @@ public class DeepVisibilitySensor {
 
                 if (ShannonEntropy(pipeName) > 3.5 || pipeName.Contains("mojo.")) {
                     EnqueueAlert("T1021.002", "SuspiciousNamedPipe", GetProcessName(data.ProcessID), "Unknown", data.ProcessID, 0, data.ThreadID, "", $"Pipe: {pipeName}");
+                }
+            }
+
+            var matrix = _activeMatrix;
+            int fileMatch = matrix.AcFile.SearchFirst(data.FileName);
+            if (fileMatch >= 0 && matrix.MapFile.TryGetValue(fileMatch, out SigmaRule rule)) {
+
+                string cacheRuleName = rule.id;
+                int bracketIdx = cacheRuleName.IndexOf('[');
+                if (bracketIdx >= 0) cacheRuleName = cacheRuleName.Substring(0, bracketIdx).Trim();
+                string procName = GetProcessName(data.ProcessID);
+                string cacheKey = $"{procName}|{cacheRuleName}";
+
+                if (!SuppressedSigmaRules.ContainsKey(cacheRuleName) && !SuppressedProcessRules.ContainsKey(cacheKey)) {
+                    EnqueueAlert("Sigma_Match", "FileDropDetection", procName, "Unknown", data.ProcessID, 0, data.ThreadID, data.FileName, $"Rule: {rule.id}");
                 }
             }
 
@@ -782,7 +913,7 @@ public class DeepVisibilitySensor {
         }
     }
 
-    private class AhoCorasick {
+    public class AhoCorasick {
         class Node {
             public Dictionary<char, Node> Children = new Dictionary<char, Node>();
             public Node Fail;
@@ -790,18 +921,21 @@ public class DeepVisibilitySensor {
         }
 
         private Node Root = new Node();
+        private int _keywordIndex = 0; // Tracks the dictionary mapping ID
 
-        public void Build(string[] keywords) {
-            for (int i = 0; i < keywords.Length; i++) {
-                Node current = Root;
-                foreach (char originalC in keywords[i]) {
-                    char c = char.ToLowerInvariant(originalC);
-                    if (!current.Children.ContainsKey(c)) current.Children[c] = new Node();
-                    current = current.Children[c];
-                }
-                current.Outputs.Add(i);
+        // Add a single string dynamically
+        public void AddString(string keyword) {
+            Node current = Root;
+            foreach (char originalC in keyword) {
+                char c = char.ToLowerInvariant(originalC);
+                if (!current.Children.ContainsKey(c)) current.Children[c] = new Node();
+                current = current.Children[c];
             }
+            current.Outputs.Add(_keywordIndex++);
+        }
 
+        // Build failure links without requiring an array
+        public void Build() {
             Queue<Node> queue = new Queue<Node>();
             foreach (var child in Root.Children.Values) {
                 child.Fail = Root;

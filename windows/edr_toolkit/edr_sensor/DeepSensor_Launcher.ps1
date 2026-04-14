@@ -574,6 +574,12 @@ function Sync-YaraIntelligence {
 
     foreach ($rule in $LocalRules) {
         try {
+            # GATEKEEPER: Test-compile the rule in memory before committing to a vector
+            if (-not [DeepVisibilitySensor]::IsYaraRuleValid($rule.FullName)) {
+                Write-Diag "    [!] Excluding incompatible/invalid YARA rule: $($rule.Name)" "WARNING"
+                continue # Skip this file and move to the next
+            }
+
             $content = [System.IO.File]::ReadAllText($rule.FullName)
             $target = "Core_C2"
 
@@ -592,6 +598,112 @@ function Sync-YaraIntelligence {
         catch { continue }
     }
     Write-Diag "    [+] YARA Intelligence sorted and ready for compilation." "STARTUP"
+}
+
+function Get-CompiledSigmaBase64 {
+    $LocalSigmaDir = Join-Path $ScriptDir "sigma"
+    if (-not (Test-Path $LocalSigmaDir)) { return "" }
+
+    $SigmaFiles = Get-ChildItem -Path $LocalSigmaDir -Include "*.yml", "*.yaml" -Recurse
+    $RuleList = [System.Collections.Generic.List[hashtable]]::new()
+
+    foreach ($file in $SigmaFiles) {
+        $lines = Get-Content $file.FullName
+        $content = $lines -join "`n"
+
+        # Noise reduction and scope filters
+        if ($content -notmatch "product:\s*windows") { continue }
+        if ($content -match "XBAP Execution From Uncommon Locations" -or
+            $content -match "Suspicious Double Extension File Execution" -or
+            $content -match "PresentationHost\.EXE") { continue }
+        if ($content -match "sha256:" -or $content -match "md5:") { continue }
+
+        $title = "Unknown Sigma Rule"
+        $category = "process_creation" # Default fallback
+        $ruleTags = @()
+        $inAnchorBlock = $false
+        $inTagsBlock = $false
+
+        foreach ($line in $lines) {
+            if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
+
+            if ($line -match "(?i)category:\s*(.+)") {
+                $rawCat = $matches[1].Trim(" '`"").ToLower()
+                if ($rawCat -match "registry") { $category = "registry_event" }
+                elseif ($rawCat -match "file") { $category = "file_event" }
+                elseif ($rawCat -match "image") { $category = "image_load" }
+                else { $category = "process_creation" }
+                continue
+            }
+
+            if ($line -match "(?i)^tags:") { $inTagsBlock = $true; $inAnchorBlock = $false; continue }
+            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|TargetFilename|Details|ScriptBlockText|ImageLoaded|Signature|Image|ParentImage)\|.*?(contains|endswith|startswith).*?:") {
+                $inAnchorBlock = $true; $inTagsBlock = $false; continue
+            }
+
+            if ($inTagsBlock) {
+                if ($line -match "^\s*-\s*(.+)") {
+                    $val = $matches[1].Trim(" '`"")
+                    if (-not [string]::IsNullOrWhiteSpace($val)) { $ruleTags += $val }
+                } elseif ($line -match "^[a-zA-Z]") { $inTagsBlock = $false }
+            }
+
+            if (-not $inTagsBlock -and $line -match "^[a-zA-Z]") { $inAnchorBlock = $false }
+
+            if ($inAnchorBlock -and $line -match "^\s*-\s*(.+)") {
+                $val = $matches[1].Trim(" '`"")
+                if (-not [string]::IsNullOrWhiteSpace($val) -and $val.Length -gt 3 -and $val -notmatch "(?i)^\.exe$" -and $val -notmatch "(?i)^[a-z]:\\\\?$") {
+                    $formattedTitle = if ($ruleTags.Count -gt 0) { "$title [$($ruleTags -join ', ')]" } else { $title }
+                    [void]$RuleList.Add(@{ id = $formattedTitle; category = $category; anchor_string = $val })
+                }
+            }
+        }
+    }
+
+    if ($RuleList.Count -eq 0) { return "" }
+    $ruleStrings = [System.Collections.Generic.List[string]]::new()
+    foreach ($rule in $RuleList) {
+        $b64Anchor = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($rule.anchor_string))
+        $ruleStrings.Add("$($rule.category)|$($rule.id)|$b64Anchor")
+    }
+
+    $Payload = $ruleStrings -join "[NEXT]"
+    $Base64Sigma = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Payload))
+    return $Base64Sigma
+}
+
+function Invoke-StagingInjection {
+    $StagingDir = "$ScriptDir\sigma_staging"
+    $SigmaDir = "$ScriptDir\sigma"
+
+    if (-not (Test-Path $StagingDir)) {
+        Write-Diag "`n[*] Staging directory ($StagingDir) does not exist. Skipping." "STARTUP"
+        Start-Sleep -Seconds 1
+        return
+    }
+
+    try {
+        $StagedFiles = Get-ChildItem -Path $StagingDir -Filter "*.yaml" -ErrorAction Stop
+        if ($StagedFiles.Count -gt 0) {
+            Write-Diag "`n[!] HOT RELOAD INITIATED: Injecting $($StagedFiles.Count) rules from staging..." "STARTUP"
+
+            if (-not (Test-Path $SigmaDir)) { New-Item -ItemType Directory -Path $SigmaDir | Out-Null }
+            Move-Item -Path "$StagingDir\*.yaml" -Destination $SigmaDir -Force -ErrorAction Stop
+
+            $NewBase64Rules = Get-CompiledSigmaBase64
+            if (-not [string]::IsNullOrEmpty($NewBase64Rules)) {
+                [DeepVisibilitySensor]::UpdateSigmaRules($NewBase64Rules)
+            }
+            Add-AlertMessage "HOT RELOAD SUCCESSFUL" "$([char]27)[92;40m"
+            Start-Sleep -Seconds 2
+        } else {
+            Write-Diag "`n[*] Staging directory is empty. No rules to inject." "STARTUP"
+            Start-Sleep -Seconds 1
+        }
+    } catch {
+        Write-Diag "`n[-] HOT RELOAD FAILED: $($_.Exception.Message)" "STARTUP"
+        Start-Sleep -Seconds 2
+    }
 }
 
 # ====================== SIGMA COMPILER & THREAT INTEL ======================
@@ -637,16 +749,12 @@ function Initialize-SigmaEngine {
     }
 
     $SigmaFiles = Get-ChildItem -Path $LocalSigmaDir -Include "*.yml", "*.yaml" -Recurse
-
-    $SigmaCmdKeys = [System.Collections.Generic.List[string]]::new()
-    $SigmaCmdTitles = [System.Collections.Generic.List[string]]::new()
-    $SigmaImgKeys = [System.Collections.Generic.List[string]]::new()
-    $SigmaImgTitles = [System.Collections.Generic.List[string]]::new()
+    $RuleList = [System.Collections.Generic.List[hashtable]]::new()
 
     $ParsedCount = 0
     $SkippedCount = 0
 
-    Write-Diag "    [*] Compiling local Sigma rules into Aho-Corasick arrays..." "STARTUP"
+    Write-Diag "    [*] Compiling local Sigma rules into JSON Aho-Corasick Matrix..." "STARTUP"
 
     foreach ($file in $SigmaFiles) {
         $lines = Get-Content $file.FullName
@@ -658,23 +766,33 @@ function Initialize-SigmaEngine {
             $content -match "PresentationHost\.EXE") {
             $SkippedCount++; continue
         }
-
         if ($content -match "sha256:" -or $content -match "md5:") { $SkippedCount++; continue }
 
         $title = "Unknown Sigma Rule"
+        $category = "process_creation" # Default fallback
         $ruleTags = @()
-        $inCmdBlock = $false
-        $inImgBlock = $false
+        $inAnchorBlock = $false
         $inTagsBlock = $false
 
         foreach ($line in $lines) {
+            # Extract Title
             if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
-            if ($line -match "(?i)^tags:") { $inTagsBlock = $true; $inCmdBlock = $false; $inImgBlock = $false; continue }
-            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|Details|ScriptBlockText|ImageLoaded|Signature)\|.*?contains.*?:") {
-                $inCmdBlock = $true; $inImgBlock = $false; $inTagsBlock = $false; continue
+
+            # Extract Category to route to the correct C# Aho-Corasick Tree
+            if ($line -match "(?i)category:\s*(.+)") {
+                $rawCat = $matches[1].Trim(" '`"").ToLower()
+                if ($rawCat -match "registry") { $category = "registry_event" }
+                elseif ($rawCat -match "file") { $category = "file_event" }
+                elseif ($rawCat -match "image") { $category = "image_load" }
+                else { $category = "process_creation" }
+                continue
             }
-            if ($line -match "(?i)(Image|ImageLoaded)\|.*?endswith.*?:") {
-                $inImgBlock = $true; $inCmdBlock = $false; $inTagsBlock = $false; continue
+
+            if ($line -match "(?i)^tags:") { $inTagsBlock = $true; $inAnchorBlock = $false; continue }
+
+            # Unified regex to catch anchor strings across all categories
+            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|TargetFilename|Details|ScriptBlockText|ImageLoaded|Signature|Image|ParentImage)\|.*?(contains|endswith|startswith).*?:") {
+                $inAnchorBlock = $true; $inTagsBlock = $false; continue
             }
 
             if ($inTagsBlock) {
@@ -686,32 +804,25 @@ function Initialize-SigmaEngine {
                 }
             }
 
-            if (-not $inTagsBlock -and $line -match "^[a-zA-Z]") { $inCmdBlock = $false; $inImgBlock = $false }
+            if (-not $inTagsBlock -and $line -match "^[a-zA-Z]") { $inAnchorBlock = $false }
 
-            if ($inCmdBlock -and $line -match "^\s*-\s*(.+)") {
+            if ($inAnchorBlock -and $line -match "^\s*-\s*(.+)") {
                 $val = $matches[1].Trim(" '`"")
                 if (-not [string]::IsNullOrWhiteSpace($val) -and $val.Length -gt 3 -and $val -notmatch "(?i)^\.exe$" -and $val -notmatch "(?i)^[a-z]:\\\\?$") {
-                    $SigmaCmdKeys.Add($val)
-                    $formattedTitle = if ($ruleTags.Count -gt 0) { "$title [$($ruleTags -join ', ')]" } else { $title }
-                    $SigmaCmdTitles.Add($formattedTitle)
-                }
-            }
 
-            if ($inImgBlock -and $line -match "^\s*-\s*(.+)") {
-                $val = $matches[1].Trim(" '`"")
-                if (-not [string]::IsNullOrWhiteSpace($val)) {
-                    $SigmaImgKeys.Add($val)
                     $formattedTitle = if ($ruleTags.Count -gt 0) { "$title [$($ruleTags -join ', ')]" } else { $title }
-                    $SigmaImgTitles.Add($formattedTitle)
+
+                    [void]$RuleList.Add(@{ id = $formattedTitle; category = $category; anchor_string = $val })
                 }
             }
         }
         $ParsedCount++
     }
 
+    # Re-inject the core built-in commands
     $BuiltInCmds = @("sekurlsa::logonpasswords", "lsadump::", "privilege::debug", "Invoke-BloodHound", "procdump -ma lsass", "vssadmin delete shadows")
     foreach ($c in $BuiltInCmds) {
-        $SigmaCmdKeys.Add($c); $SigmaCmdTitles.Add("Built-in Core TI Signature")
+        [void]$RuleList.Add(@{ id = "Built-in Core TI Signature"; category = "process_creation"; anchor_string = $c })
     }
 
     Write-Diag "    [+] Gatekeeper Compilation Complete: $ParsedCount rules armed ($SkippedCount incompatible rules safely bypassed)." "STARTUP"
@@ -750,9 +861,17 @@ function Initialize-SigmaEngine {
         Write-Diag "[-] LOLDrivers API parsing failed: $($_.Exception.Message)" "STARTUP"
     }
 
+    $ruleStrings = [System.Collections.Generic.List[string]]::new()
+    foreach ($rule in $RuleList) {
+        $b64Anchor = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($rule.anchor_string))
+        $ruleStrings.Add("$($rule.category)|$($rule.id)|$b64Anchor")
+    }
+
+    $Payload = $ruleStrings -join "[NEXT]"
+    $Base64Sigma = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Payload))
+
     return @{
-        CmdKeys = $SigmaCmdKeys.ToArray(); CmdTitles = $SigmaCmdTitles.ToArray()
-        ImgKeys = $SigmaImgKeys.ToArray(); ImgTitles = $SigmaImgTitles.ToArray()
+        Base64Sigma = $Base64Sigma
         Drivers = [string[]]($TiDriverSignatures | Select-Object)
     }
 }
@@ -791,11 +910,14 @@ try {
         "System.Threading", "System.Threading.Thread"
     )
 
-    $RefAssemblies += $SiblingDlls.FullName
+    if ($SiblingDlls) {
+        foreach ($dll in $SiblingDlls) { $RefAssemblies += $dll.FullName }
+    }
 
-    # Only compile if the class isn't already resident in the active memory session
     if (-not ("DeepVisibilitySensor" -as [type])) {
-        Add-Type -TypeDefinition (Get-Content (Join-Path $ScriptDir "OsSensor.cs") -Raw) -ReferencedAssemblies $RefAssemblies -ErrorAction Stop
+        Add-Type -TypeDefinition (Get-Content (Join-Path $ScriptDir "OsSensor.cs") -Raw) `
+                 -ReferencedAssemblies $RefAssemblies `
+                 -ErrorAction Stop
     }
 
     Write-Diag "    [*] Bootstrapping unmanaged memory structures..." "STARTUP"
@@ -803,13 +925,23 @@ try {
     # Map the DLL path for the C# DllImport dynamically
     [DeepVisibilitySensor]::SetLibraryPath($ScriptDir)
 
+    # Initialize the C# Engine with the 5 required core parameters
     [DeepVisibilitySensor]::Initialize(
         $ActualDllPath,
-        $PID, $CompiledTI.Drivers,
-        $CompiledTI.CmdKeys, $CompiledTI.CmdTitles,
-        $CompiledTI.ImgKeys, $CompiledTI.ImgTitles,
-        $BenignExplorerValues, $BenignADSProcs
+        $PID,
+        $CompiledTI.Drivers,
+        $BenignExplorerValues,
+        $BenignADSProcs
     )
+
+    # Inject the startup Sigma JSON Matrix
+    if (-not [string]::IsNullOrEmpty($CompiledTI.Base64Sigma)) {
+        [DeepVisibilitySensor]::UpdateSigmaRules($CompiledTI.Base64Sigma)
+    } else {
+        Write-Diag "    [!] Warning: No valid Sigma rules parsed on startup." "STARTUP"
+        $EmptyJson = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("[]"))
+        [DeepVisibilitySensor]::UpdateSigmaRules($EmptyJson)
+    }
 
     Sync-YaraIntelligence
     $YaraRulesPath = if ($OfflineRepoPath) { Join-Path $OfflineRepoPath "yara_rules" } else { Join-Path $ScriptDir "yara_rules" }
@@ -843,18 +975,32 @@ try {
     while ($true) {
         $now = Get-Date
         if ([console]::KeyAvailable) {
-            $key = [console]::ReadKey($true)
-            if ($key.Key -eq 'Q' -or ($key.Key -eq 'C' -and $key.Modifiers -match 'Control')) {
-                Write-Host "`n[!] Graceful shutdown initiated by user. Flushing memory..." -ForegroundColor Yellow
+            $keyInput = [console]::ReadKey($true)
+            if ($keyInput.Key -eq 'Q' -or ($keyInput.Key -eq 'C' -and $keyInput.Modifiers -match 'Control')) {
+                Write-Host "`n[!] Graceful shutdown initiated by user..." -ForegroundColor Yellow
                 break
+            }
+            # Triggers dynamic reload from sigma_staging/
+            if ($keyInput.KeyChar -eq 'i' -or $keyInput.KeyChar -eq 'I') {
+                Invoke-StagingInjection
             }
         }
 
         if (($now - $LastPolicySync).TotalMinutes -ge 60) {
             $LastPolicySync = $now
             icacls $ScriptDir /reset /T /C /Q | Out-Null
-            $NewTI = Initialize-SigmaEngine
-            [DeepVisibilitySensor]::UpdateThreatIntel($NewTI.Drivers, $NewTI.CmdKeys, $NewTI.CmdTitles, $NewTI.ImgKeys, $NewTI.ImgTitles)
+            # 1. Fetch, Extract, and Compile the heavy startup matrices
+            $EngineData = Initialize-SigmaEngine
+            # 2. Pass the compiled arrays natively to the C# Engine
+            if (-not [string]::IsNullOrEmpty($EngineData.Base64Sigma)) {
+                [DeepVisibilitySensor]::UpdateSigmaRules($EngineData.Base64Sigma)
+            } else {
+                Write-Diag "    [!] Warning: No valid Sigma rules parsed on startup." "STARTUP"
+                $EmptyJson = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("[]"))
+                [DeepVisibilitySensor]::Initialize($EmptyJson)
+            }
+
+            [DeepVisibilitySensor]::UpdateThreatIntel($EngineData.Drivers)
             Protect-SensorEnvironment
             Add-AlertMessage "POLICY SYNC COMPLETE" $cGreen
         }
@@ -899,7 +1045,12 @@ try {
                                 continue
                             }
 
-                            if ($alert.score -eq 0.0) { Add-AlertMessage "LEARNING: $($alert.reason)" $cDark; continue }
+                            if ($alert.score -eq 0.0) {
+                                Add-AlertMessage "LEARNING: $($alert.reason)" $cDark
+                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"Learning`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
+                                $script:logBatch.Add($logObj)
+                                continue
+                            }
 
                             if ($alert.severity -eq "CRITICAL") {
                                 [DeepVisibilitySensor]::TotalAlertsGenerated++
