@@ -1,0 +1,72 @@
+title: Warlock Ransomware Activity - Process Execution
+id: 5e4bb6ae-ad18-4716-86a1-9bd161f73d75-process
+status: experimental
+description: Detects process execution associated with Warlock ransomware, including SharePoint privesc, discovery commands, registry credential dumping, defense evasion, and RClone exfiltration.
+references:
+  - https://www.trendmicro.com/en_us/research/25/h/warlock-ransomware.html
+author: RW
+date: 2025-08-21
+tags:
+  - attack.t1190
+  - attack.t1087.002
+  - attack.t1003.002
+  - attack.t1562.001
+  - attack.t1021.002
+  - attack.t1572
+  - attack.t1567.002
+  - attack.t1486
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_ia_privesc_sp:
+    ParentImage|endswith: '\w3wp.exe'
+    ParentCommandLine|contains: 'SharePoint'
+    CommandLine|contains:
+      - 'net user guest /active:yes'
+      - 'net localgroup administrators guest /add'
+      - 'New-GPO'
+  selection_discovery:
+    CommandLine|contains:
+      - 'nltest /domain_trusts'
+      - 'wmic product get name,identifyingnumber'
+      - 'net group "domain admins"'
+      - 'net group "domain computers"'
+      - 'net group "domain controllers"'
+      - 'quser'
+  selection_creddump_mimikatz:
+    Image|endswith: '\mimikatz.exe'
+  selection_creddump_reg_sam:
+    CommandLine|contains|all:
+      - 'reg'
+      - 'save'
+      - 'hklm\sam'
+  selection_creddump_reg_sec:
+    CommandLine|contains|all:
+      - 'reg'
+      - 'save'
+      - 'hklm\security'
+  selection_de_killav:
+    ParentImage|endswith: '\vmtools.exe'
+    CommandLine|contains:
+      - 'taskkill'
+      - 'net stop'
+  selection_c2_tunnel:
+    CommandLine|contains|all:
+      - 'tunnel'
+      - 'run'
+      - '--token'
+  selection_lm_copy:
+    CommandLine|contains|all:
+      - 'copy'
+      - '\c$\users\public\'
+  selection_exfil_rclone:
+    ParentImage|endswith:
+      - '\rclone.exe'
+      - '\TrendSecurity.exe'
+    CommandLine|contains|all:
+      - 'copy'
+      - '--protondrive-username'
+      - '--protondrive-password'
+  condition: 1 of selection_*
+level: high

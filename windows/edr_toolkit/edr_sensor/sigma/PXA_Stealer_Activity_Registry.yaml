@@ -1,0 +1,19 @@
+title: PXA Stealer Infostealer - Registry Persistence
+id: 2a1c8e7f-3b4d-4e9a-8f1b-9c0d7e6f5a4b-reg
+status: experimental
+description: Detects persistence via Run keys to launch the payload from C:\Users\Public.
+author: RW
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_persist:
+    TargetObject|endswith: '\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    Details|contains|all:
+      - 'cmd'
+      - '/c'
+      - 'start'
+      - 'C:\Users\Public\'
+      - 'svchost.exe'
+  condition: selection_persist
+level: high

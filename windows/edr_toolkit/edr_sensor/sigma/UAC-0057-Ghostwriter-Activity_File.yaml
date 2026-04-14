@@ -1,0 +1,37 @@
+title: UAC-0057 (Ghostwriter/UNC1151) Activity - File Artifacts
+id: 67890dd2-33f3-4955-97ec-859901b60b19-file
+status: experimental
+description: Detects the creation of specific file paths and artifacts used during UAC-0057 (Ghostwriter) intrusions for staging and persistence.
+author: RW
+date: 2025-08-21
+tags:
+  - attack.initial_access
+  - attack.t1566.001
+  - threat_group.uac-0057
+  - threat_group.unc1151
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_path:
+    TargetFilename|contains:
+      - '\Temp\DefenderProtectionScope.log'
+      - '\Microsoft\System\ProtectedCertSystem.dll'
+      - '\Serv\0x00bac729fe.log'
+      - '\Microsoft\Windows\Protection overview.lnk'
+      - '\Temp\sdw9gobh0n'
+      - '\Microsoft\Windows\Protection overview past.lnk'
+      - '\Logs\sdw9gobh0n.log'
+      - '\SDXHelp\SDXHelp.dll'
+      - '\Runtime\RuntimeBroker.dll'
+      - '\MSDE\mrasp86.dll'
+      - '\DiagnosticComponents\DiagnosticComponents.dll'
+      - '\ProgramData\OfficeRuntimeBroker.xlam'
+      - '\ProgramData\OfficeRuntimeBroker.lnk'
+      - '\ProgramData\~OfficeRuntimeBroker.dat'
+      - '\ProgramData\ssh\ssh.pif.pif.pif'
+      - '\ProgramData\~DF20BC61C6277A354A.dat'
+  condition: selection_path
+falsepositives:
+  - Legitimate software creating files in the specified paths, although the filenames are quite specific.
+level: high

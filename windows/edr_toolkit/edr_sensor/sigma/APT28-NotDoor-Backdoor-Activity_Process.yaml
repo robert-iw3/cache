@@ -1,0 +1,18 @@
+title: APT28 NotDoor Backdoor - Process Execution
+id: ce3c86cc-f58f-4c67-b5c1-58d21d8eac83-process
+status: experimental
+author: RW
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_proc_nslookup:
+    CommandLine|contains|all:
+      - 'nslookup'
+      - '.dnshook.site'
+  selection_proc_curl:
+    CommandLine|contains|all:
+      - 'curl'
+      - 'webhook.site'
+  condition: 1 of them
+level: high

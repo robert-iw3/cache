@@ -1,0 +1,15 @@
+title: Interlock Ransomware - Run Key Persistence
+id: 4255f75b-db64-4e89-a971-c1d83bf99a3b-registry
+status: experimental
+author: RW
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_registry:
+    TargetObject|contains: '\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\'
+    TargetObject|endswith:
+      - '\ChromeUpdater'
+      - '\0neDrive'
+  condition: selection_registry
+level: high

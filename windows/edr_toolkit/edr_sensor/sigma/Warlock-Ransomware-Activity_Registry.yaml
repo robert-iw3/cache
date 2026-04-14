@@ -1,0 +1,24 @@
+title: Warlock Ransomware Activity - RDP Tampering
+id: 5e4bb6ae-ad18-4716-86a1-9bd161f73d75-registry
+status: experimental
+description: Detects registry modifications used by Warlock ransomware to enable RDP and disable Network Level Authentication (NLA) for lateral movement.
+references:
+  - https://www.trendmicro.com/en_us/research/25/h/warlock-ransomware.html
+author: RW
+date: 2025-08-21
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+  - attack.lateral_movement
+  - attack.t1021.002
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_pers_rdp:
+    Details: '0'
+    TargetObject|endswith:
+      - '\SYSTEM\CurrentControlSet\Control\Terminal Server\fDenyTSConnections'
+      - '\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\UserAuthentication'
+  condition: selection_pers_rdp
+level: high

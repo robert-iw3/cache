@@ -1,0 +1,31 @@
+title: UAC-0057 (Ghostwriter/UNC1151) Activity - Process Execution
+id: 67890dd2-33f3-4955-97ec-859901b60b19-process
+status: experimental
+description: Detects process execution TTPs associated with UAC-0057 (Ghostwriter) campaigns, including suspicious rundll32 executions and Excel spawning the expand.exe utility.
+author: RW
+date: 2025-08-21
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.t1218.011
+  - threat_group.uac-0057
+  - threat_group.unc1151
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_proc_rundll32:
+    Image|endswith: '\rundll32.exe'
+    CommandLine|contains:
+      - ',#1'
+      - ',TS_STATUS_INFO_get0_status'
+      - 'shell32.dll,ShellExec_RunDLL'
+  selection_proc_expand:
+    ParentImage|endswith: '\excel.exe'
+    Image|endswith: '\expand.exe'
+    CommandLine|contains|all:
+      - '.xlam'
+      - '.dat'
+      - 'ProgramData'
+  condition: 1 of selection_*
+level: high

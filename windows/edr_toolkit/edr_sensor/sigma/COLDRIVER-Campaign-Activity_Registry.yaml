@@ -1,0 +1,23 @@
+title: COLDRIVER Campaign - Registry Persistence & Staging
+id: b22342d9-124d-4df7-a1c9-814619bc5c6d-registry
+status: experimental
+description: Detects registry modifications used by COLDRIVER for Logon Script persistence and staging encoded payloads.
+author: RW
+date: 2025-09-27
+tags:
+  - apt.coldriver
+  - attack.persistence
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  persist_reg:
+    TargetObject|endswith: '\Environment\UserInitMprLogonScript'
+    Details|contains: 'rundll32.exe'
+  payload_reg:
+    TargetObject|contains: '\Software\Microsoft\Windows\CurrentVersion\Internet Settings\'
+    TargetObject|endswith:
+      - '\ProxyEnable'
+      - '\ProxyServer'
+  condition: persist_reg or payload_reg
+level: high

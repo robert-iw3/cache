@@ -1,0 +1,23 @@
+title: PipeMagic Backdoor - Loader Activity
+id: pipemagic-loader-process
+status: experimental
+description: Detects CertUtil download chains and MSBuild `.mshi` execution used by Storm-2460.
+author: RW
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_certutil:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains|all:
+      - '-urlcache'
+      - '-f'
+    CommandLine|contains:
+      - '.tmp'
+      - '.dat'
+      - '.msbuild'
+  selection_msbuild:
+    Image|endswith: '\msbuild.exe'
+    CommandLine|contains: '.mshi'
+  condition: 1 of selection_*
+level: high

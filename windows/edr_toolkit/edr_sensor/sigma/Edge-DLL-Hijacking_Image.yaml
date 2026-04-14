@@ -1,0 +1,18 @@
+title: Microsoft Edge DLL Hijacking - Module Load
+id: a6ee096b-0dc7-4562-990a-e6baf6e52f94-image
+status: experimental
+description: Detects Edge loading any DLL from a specific user-writable data path.
+author: RW
+date: 2025-08-12
+logsource:
+  category: image_load
+  product: windows
+detection:
+  selection_image_load:
+    Image|endswith: '\msedge.exe'
+    ImageLoaded|endswith: '.dll'
+    ImageLoaded|contains|all:
+      - '\AppData\Local\Microsoft\Edge\'
+      - '\User Data\Well Known Domains\'
+  condition: selection_image_load
+level: medium

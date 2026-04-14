@@ -1,0 +1,14 @@
+title: APT28 NotDoor Backdoor - File Drop
+id: ce3c86cc-f58f-4c67-b5c1-58d21d8eac83-file
+status: experimental
+author: RW
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_file_drop:
+    TargetFilename|endswith:
+      - 'c:\programdata\testtemp.ini'
+      - '\Microsoft\Outlook\VbaProject.OTM'
+  condition: selection_file_drop
+level: high

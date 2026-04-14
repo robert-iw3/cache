@@ -1,0 +1,17 @@
+title: Microsoft Edge DLL Hijacking - Payload Drop
+id: a6ee096b-0dc7-4562-990a-e6baf6e52f94-file
+status: experimental
+description: Detects the creation of a DLL file in a specific user-writable Microsoft Edge path.
+author: RW
+date: 2025-08-12
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_file_create:
+    TargetFilename|endswith: '.dll'
+    TargetFilename|contains|all:
+      - '\AppData\Local\Microsoft\Edge\'
+      - '\User Data\Well Known Domains\'
+  condition: selection_file_create
+level: medium

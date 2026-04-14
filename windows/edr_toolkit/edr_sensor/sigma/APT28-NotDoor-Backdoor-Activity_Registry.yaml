@@ -1,0 +1,19 @@
+title: APT28 NotDoor Backdoor - Outlook Registry Tampering
+id: ce3c86cc-f58f-4c67-b5c1-58d21d8eac83-registry
+status: experimental
+author: RW
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_reg_boot:
+    TargetObject|endswith: '\Software\Microsoft\Office\16.0\Outlook\LoadMacroProviderOnBoot'
+    Details: '1'
+  selection_reg_security:
+    TargetObject|endswith: '\Software\Microsoft\Office\16.0\Outlook\Security\Level'
+    Details: '1'
+  selection_reg_options:
+    TargetObject|endswith: '\Software\Microsoft\Office\16.0\Outlook\Options\General\PONT_STRING'
+    Details: ';'
+  condition: 1 of them
+level: high

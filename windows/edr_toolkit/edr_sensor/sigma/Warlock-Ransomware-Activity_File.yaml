@@ -1,0 +1,19 @@
+title: Warlock Ransomware Activity - BYOVD Driver Drop
+id: 5e4bb6ae-ad18-4716-86a1-9bd161f73d75-file
+status: experimental
+description: Detects the file creation of the vulnerable googleApiUtil64.sys driver used by Warlock ransomware for BYOVD defense evasion.
+references:
+  - https://www.trendmicro.com/en_us/research/25/h/warlock-ransomware.html
+author: RW
+date: 2025-08-21
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_de_driver:
+    TargetFilename|endswith: '\googleApiUtil64.sys'
+  condition: selection_de_driver
+level: high

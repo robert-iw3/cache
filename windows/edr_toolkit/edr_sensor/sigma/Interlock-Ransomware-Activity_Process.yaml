@@ -1,0 +1,32 @@
+title: Interlock Ransomware - Execution & Defense Evasion
+id: 4255f75b-db64-4e89-a971-c1d83bf99a3b-process
+status: experimental
+author: RW
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_vssadmin:
+    Image|endswith: '\vssadmin.exe'
+    CommandLine|contains|all:
+      - 'delete'
+      - 'shadows'
+      - '/all'
+      - '/quiet'
+  selection_bcdedit:
+    Image|endswith: '\bcdedit.exe'
+    CommandLine|contains|all:
+      - 'set'
+      - 'recoveryenabled'
+      - 'no'
+  selection_wevtutil:
+    Image|endswith: '\wevtutil.exe'
+    CommandLine|contains|all:
+      - 'cl'
+      - 'System'
+  selection_renamed_psexec:
+    # Interlock renames psexec to 'p.exe'
+    Image|endswith: '\p.exe'
+    CommandLine|contains: '-accepteula'
+  condition: 1 of selection_*
+level: high

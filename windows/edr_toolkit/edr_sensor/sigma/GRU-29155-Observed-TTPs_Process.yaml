@@ -1,0 +1,27 @@
+title: GRU Unit 29155 - Process TTPs
+id: e5151f01-7e7d-4c34-bf42-8cadcefdec80-process
+status: experimental
+author: RW
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_vssadmin_delete:
+    Image|endswith: '\vssadmin.exe'
+    CommandLine|contains|all:
+      - 'delete'
+      - 'shadows'
+  selection_certutil_download:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains|all:
+      - '-urlcache'
+      - '-split'
+      - '-f'
+  selection_discovery_cmd:
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - '/c'
+      - 'whoami'
+      - 'systeminfo'
+  condition: 1 of selection_*
+level: high

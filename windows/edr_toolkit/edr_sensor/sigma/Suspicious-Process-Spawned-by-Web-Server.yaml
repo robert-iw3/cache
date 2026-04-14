@@ -16,53 +16,33 @@ tags:
   - threat_actor.glacial_panda
 logsource:
   category: process_creation
-  product:
-    - linux
-    - windows
+  product: windows
 detection:
   parent_process:
     # Parent process is a common web server process
-    parent.image|endswith:
-      # Windows
+    ParentImage|endswith:
       - '\w3wp.exe'
       - '\httpd.exe'
       - '\nginx.exe'
       - '\tomcat8.exe'
       - '\tomcat9.exe'
       - '\node.exe'
-      # Linux
-      - '/apache2'
-      - '/caddy'
-      - '/httpd'
-      - '/lighttpd'
-      - '/nginx'
-      - '/php-fpm'
   child_process:
     # Child process is a shell or reconnaissance tool
-    image|endswith:
+    Image|endswith:
       # Shells
       - '\sh.exe'
       - '\bash.exe'
       - '\cmd.exe'
       - '\powershell.exe'
-      - '/sh'
-      - '/bash'
-      - '/dash'
-      - '/ksh'
-      - '/zsh'
       # Recon Tools
       - '\whoami.exe'
       - '\systeminfo.exe'
       - '\ipconfig.exe'
       - '\net.exe'
       - '\net1.exe'
-      - '/whoami'
-      - '/id'
-      - '/ip'
-      - '/ifconfig'
-      - '/uname'
-      - '/wget'
-      - '/curl'
+      - '\wget.exe'
+      - '\curl.exe'
   condition: parent_process and child_process
 falsepositives:
   - Some web applications or administrative scripts may legitimately spawn shell commands. These should be investigated and filtered.

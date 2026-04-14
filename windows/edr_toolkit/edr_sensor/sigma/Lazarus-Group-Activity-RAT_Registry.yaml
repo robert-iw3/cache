@@ -1,0 +1,14 @@
+title: Lazarus Group Activity - SessionEnv Service Tampering (Registry)
+id: 14fdf41e-2e39-42e0-8e43-d33c364a3470-registry
+status: experimental
+author: RW
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_persistence_reg:
+    TargetObject|contains: '\SYSTEM\CurrentControlSet\Services\SessionEnv'
+    TargetObject|endswith: '\Start'
+    Details: '2'
+  condition: selection_persistence_reg
+level: high

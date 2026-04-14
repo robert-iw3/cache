@@ -1,0 +1,47 @@
+title: COLDRIVER Campaign - Process Execution & Reconnaissance
+id: b22342d9-124d-4df7-a1c9-814619bc5c6d-process
+status: experimental
+description: Detects process execution associated with BAITSWITCH loaders, SIMPLEFIX payloads, and extensive PowerShell reconnaissance.
+author: RW
+date: 2025-09-27
+tags:
+  - apt.coldriver
+  - attack.execution
+  - attack.discovery
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  rundll_exec:
+    Image|endswith: '\rundll32.exe'
+    CommandLine|contains:
+      - 'UpdateCheck'
+      - 'InitData'
+  payload_proc_base:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - '-ExecutionPolicy'
+      - 'Bypass'
+      - '-WindowStyle'
+      - 'Hidden'
+      - '-Command'
+  payload_proc_keywords:
+    CommandLine|contains:
+      - '[Convert]::FromBase64String'
+      - 'System.IO.Compression.DeflateStream'
+      - 'VirtualAlloc'
+      - 'CreateThread'
+  recon_system:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'whoami'
+      - '/all'
+      - 'ipconfig'
+      - 'systeminfo'
+  recon_files_base:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'EnumerateFiles'
+      - 'EnumerateDirectories'
+  condition: rundll_exec or (payload_proc_base and 1 of payload_proc_keywords) or recon_system or recon_files_base
+level: high

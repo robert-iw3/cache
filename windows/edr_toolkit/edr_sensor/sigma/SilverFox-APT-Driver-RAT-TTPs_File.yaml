@@ -1,0 +1,21 @@
+title: Silver Fox APT - Driver/RAT File Drops
+id: 81689276-1a63-4563-879a-9642d5e6b5bc-file
+status: experimental
+description: Detects the file creation of components associated with the Silver Fox APT ValleyRAT deployment, specifically the vulnerable driver and the disguised RuntimeBroker.
+author: RW
+date: 2025-08-30
+tags:
+  - attack.persistence
+  - attack.t1543.003
+  - apt.silver_fox
+  - malware.valleyrat
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_file:
+    TargetFilename|endswith:
+      - '\Program Files\RunTime\RuntimeBroker.exe'
+      - '\Program Files\RunTime\Amsdk_Service.sys'
+  condition: selection_file
+level: high

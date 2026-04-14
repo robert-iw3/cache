@@ -4,20 +4,26 @@ status: experimental
 description: Detects the execution of mstsc.exe with a command line pointing to an RDP file located in temporary directories commonly used by email clients for attachments. This technique was observed in the UNC5837 "Rogue RDP" campaign.
 references:
     - https://cloud.google.com/blog/topics/threat-intelligence/windows-remote-desktop-protocol-remote-to-rogue
-author:
+author: RW
 date: 2025/04/30
 logsource:
-    product: windows
-    service: sysmon
-    definition: 'Requires Sysmon logging with Event ID 1 enabled.'
+  category: process_creation
+  product: windows
 detection:
-    selection:
-        EventID: 1
-        Image|endswith: '\mstsc.exe'
-        CommandLine|re:
-            - '(?i)"?.*\\AppData\\Local\\Microsoft\\Windows\\(INetCache|Temporary Internet Files)\\Content\.Outlook\\[A-Z0-9]{8}\\[^\\]{1,255}\.rdp"?'
-            - '(?i)"?.*\\AppData\\Local\\Packages\\Microsoft\.Outlook_[a-zA-Z0-9]{1,50}\\.{0,120}\\[^\\]{1,80}\.rdp"?'
-            - '(?i)"?.*\\AppData\\Local\\Microsoft\\Olk\\Attachments\\([^\\]{1,50}\\){0,5}[^\\]{1,80}\.rdp"?'
+  selection_exe:
+    Image|endswith: '\mstsc.exe'
+
+  selection_target:
+    CommandLine|contains: '.rdp'
+
+  selection_paths:
+    CommandLine|contains:
+      - '\AppData\Local\Microsoft\Windows\INetCache\Content.Outlook\'
+      - '\AppData\Local\Microsoft\Windows\Temporary Internet Files\Content.Outlook\'
+      - '\AppData\Local\Packages\Microsoft.Outlook_'
+      - '\AppData\Local\Microsoft\Olk\Attachments\'
+
+  condition: selection_exe and selection_target and selection_paths
     condition: selection
 falsepositives:
     - Legitimate RDP files sent via email and opened directly by users. Evaluate based on organizational policy and typical user behavior.

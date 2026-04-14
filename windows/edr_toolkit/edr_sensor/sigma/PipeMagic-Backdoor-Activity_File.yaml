@@ -1,0 +1,13 @@
+title: PipeMagic Backdoor - Named Pipe Creation
+id: pipemagic-named-pipe
+status: experimental
+description: Detects the specific Named Pipe format (\pipe\1.[hex]) created by the PipeMagic framework.
+author: RW
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_pipe:
+    TargetFilename|contains: '\pipe\1.'
+  condition: selection_pipe
+level: high

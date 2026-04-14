@@ -1,0 +1,23 @@
+title: APT37 FadeStealer / Chinotto - Process Execution
+id: cbcd1782-6bc1-46e9-ad14-3f2d03f39189-process
+status: experimental
+author: RW
+date: 2025-09-08
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  proc_schtasks:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - 'MicrosoftUpdate'
+      - '3HNoWZd.exe'
+  proc_expand:
+    ParentImage|endswith: '\cmd.exe'
+    Image|endswith: '\expand.exe'
+    CommandLine|contains: 'c:\programdata\wonder.cab'
+  proc_teleupdate:
+    Image|endswith: '\tele_update.exe'
+  condition: 1 of them
+level: high

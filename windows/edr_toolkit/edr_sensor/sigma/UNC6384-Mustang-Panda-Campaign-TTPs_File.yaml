@@ -1,0 +1,24 @@
+title: UNC6384 Mustang Panda Campaign - File Artifacts
+id: 1c851b18-8bac-4924-9c8f-56fe7fb9aba0-file
+status: experimental
+description: Detects the creation of specific staging directories and artifacts utilized by UNC6384 (Mustang Panda) during initial compromise.
+author: RW
+date: 2025-08-26
+tags:
+  - attack.execution
+  - attack.defense_evasion
+  - threat_actor.unc6384
+  - threat_actor.mustang_panda
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_paths:
+    TargetFilename|contains:
+      - '\DNVjzaXMFO\'
+      - 'C:\Users\Public\Intelnet\'
+      - 'C:\Users\Public\SecurityScan\'
+  condition: selection_paths
+falsepositives:
+  - The file paths in 'C:\Users\Public\' are somewhat generic and may require tuning based on environment specifics.
+level: high

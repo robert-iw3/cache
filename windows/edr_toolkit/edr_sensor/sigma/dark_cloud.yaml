@@ -1,17 +1,16 @@
 title: DarkCloud Stealer - AutoIt Dropper File Creation
-id: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee # Please replace with a unique identifier
+id: 4ee8cf40-2f92-4a72-9de9-70c417ff2f7c
 related:
     - https://unit42.paloaltonetworks.com/darkcloud-stealer-and-obfuscated-autoit-scripting/
 status: experimental
 description: Detects the creation of files associated with the DarkCloud Stealer dropper stage, which is an AutoIt compiled executable, as described in the linked CTI. The AutoIt script uses FileInstall() to drop these files before executing shellcode.
-author:
+author: RW
 date: 2025-05-15
 logsource:
     product: windows
     category: file_event
 detection:
     selection:
-        EventType: 11 # Sysmon Event ID for File Creation
         TargetFilename|contains:
             - 'iodization'
             - 'plainstones'

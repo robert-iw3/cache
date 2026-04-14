@@ -1,0 +1,22 @@
+title: UNC6384 Mustang Panda Campaign - Registry Persistence
+id: 1c851b18-8bac-4924-9c8f-56fe7fb9aba0-registry
+status: experimental
+description: Detects registry Run key modifications associated with a UNC6384 (Mustang Panda) campaign, specifically establishing persistence disguised as Canon printer software.
+author: RW
+date: 2025-08-26
+tags:
+  - attack.persistence
+  - attack.t1547.001
+  - threat_actor.unc6384
+  - threat_actor.mustang_panda
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_run_key:
+    TargetObject|endswith: '\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\CanonPrinter'
+    Details|contains: 'cnmpaui.exe'
+  condition: selection_run_key
+falsepositives:
+  - The persistence detection may trigger on legitimate Canon printer software. Investigate the associated file ('cnmpaui.exe') and its execution chain.
+level: high

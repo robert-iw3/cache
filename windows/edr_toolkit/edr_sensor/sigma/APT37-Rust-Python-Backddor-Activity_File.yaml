@@ -1,0 +1,17 @@
+title: APT37 FadeStealer / Chinotto - File Artifacts
+id: cbcd1782-6bc1-46e9-ad14-3f2d03f39189-file
+status: experimental
+author: RW
+logsource:
+  category: file_event
+  product: windows
+detection:
+  file_create_paths:
+    TargetFilename|contains:
+      - '\AppData\Roaming\NgenPdbk'
+      - '\VSTelems_Fade\NgenPdbc'
+      - '\VSTelems_Fade\NgenPdbm'
+      - '\VSTelems_FadeOut'
+      - '\VSTelems_FadeIn'
+  condition: file_create_paths
+level: high

@@ -1,0 +1,25 @@
+title: UAC-0057 (Ghostwriter/UNC1151) Activity - Registry Persistence
+id: 67890dd2-33f3-4955-97ec-859901b60b19-registry
+status: experimental
+description: Detects registry Run key modifications used by UAC-0057 (Ghostwriter) for reboot persistence, specifically disguising payloads as system protection or audio services.
+author: RW
+date: 2025-08-21
+tags:
+  - attack.persistence
+  - attack.t1547.001
+  - threat_group.uac-0057
+  - threat_group.unc1151
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_registry_key:
+    TargetObject|contains: '\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\'
+  selection_registry_value:
+    TargetObject|endswith:
+      - '\SytemProtectionService'
+      - '\MicrosoftDefender'
+      - '\SytemProtectService'
+      - '\Audio Driver'
+  condition: selection_registry_key and selection_registry_value
+level: high

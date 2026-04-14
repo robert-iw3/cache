@@ -1,0 +1,29 @@
+title: Water Curse Actor Activity - File Drops
+id: c03bbd4c-ff4d-4075-981e-50649a1a22aa-file
+status: experimental
+description: Detects the creation of specific malicious files and staging directories used by the Water Curse threat actor.
+references:
+  - https://www.trendmicro.com/en_us/research/25/f/water-curse.html
+author: RW
+date: 2025-08-23
+tags:
+  - attack.execution
+  - attack.defense_evasion
+  - threat_actor.water_curse
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_file_artifacts_vs_script:
+    TargetFilename|contains: '\.vs-script\'
+    TargetFilename|endswith:
+      - '\antiDebug.ps1'
+      - '\disabledefender.ps1'
+  selection_file_artifacts_temp:
+    TargetFilename|contains: '\AppData\Local\Temp\'
+    TargetFilename|endswith: '\SearchFilter.exe'
+  selection_file_artifacts_nvidia:
+    TargetFilename|contains: '\Microsoft\Vault\UserRoamingTiles\NVIDIAContainer\'
+    TargetFilename|endswith: '\NVIDIA Control Panel.exe'
+  condition: 1 of selection_*
+level: high

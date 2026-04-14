@@ -1,0 +1,72 @@
+title: Water Curse Actor Activity - Process Execution
+id: c03bbd4c-ff4d-4075-981e-50649a1a22aa-process
+status: experimental
+description: Detects process execution TTPs associated with the Water Curse threat actor, including malicious MSBuild execution, defense evasion via PowerShell, unusual scheduled tasks, and reconnaissance via NVIDIA control panel proxying.
+references:
+  - https://www.trendmicro.com/en_us/research/25/f/water-curse.html
+author: RW
+date: 2025-08-23
+tags:
+  - attack.supply_chain
+  - attack.t1195.002
+  - attack.execution
+  - attack.t1129
+  - attack.defense_evasion
+  - attack.t1562.001
+  - attack.persistence
+  - attack.t1053.005
+  - attack.collection
+  - attack.t1560
+  - threat_actor.water_curse
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_initial_exec:
+    ParentImage|endswith: '\MSBuild.exe'
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains|all:
+      - '.exec.cmd'
+      - '\Temp\MSBuildTemp\'
+  selection_defense_evasion_psh_defender:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'Set-MpPreference'
+      - '-ExclusionPath'
+      - 'C:\'
+  selection_defense_evasion_psh_vss:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'vssadmin'
+      - 'delete'
+      - 'shadows'
+      - '/all'
+  selection_defense_evasion_psh_restore:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains|all:
+      - 'Set-ItemProperty'
+      - 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore'
+      - 'DisableSR'
+  selection_persistence_schtasks_duration:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - '/du 9999:59'
+  selection_persistence_schtasks_bitlocker:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains|all:
+      - '/create'
+      - '/tn "BitLocker Encrypt All Drives"'
+      - '\OneDriveCloud\taskhostw.exe'
+  selection_staging_7z:
+    Image: 'C:\ProgramData\sevenZip\7z.exe'
+    CommandLine|contains: '-p'
+  selection_recon_nvidia:
+    ParentImage|endswith: '\NVIDIA Control Panel.exe'
+    ParentImage|contains: '\Microsoft\Vault\UserRoamingTiles\NVIDIAContainer\'
+    Image|endswith:
+      - '\curl.exe'
+      - '\wmic.exe'
+      - '\tasklist.exe'
+  condition: 1 of selection_*
+level: high

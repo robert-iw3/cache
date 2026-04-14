@@ -1,0 +1,17 @@
+title: Lazarus Group Activity - SessionEnv Service Tampering (Process)
+id: 14fdf41e-2e39-42e0-8e43-d33c364a3470-process
+status: experimental
+author: RW
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_persistence_cmd:
+    Image|endswith: '\sc.exe'
+    CommandLine|contains|all:
+      - 'config'
+      - 'sessionenv'
+      - 'start='
+      - 'auto'
+  condition: selection_persistence_cmd
+level: high

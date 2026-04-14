@@ -1,0 +1,22 @@
+title: CL-CRI-1040 (Storm-2603) - DLL Side-Loading
+id: b1446ffe-f1d7-46da-9f02-33d2b3139604-image
+status: experimental
+author: RW
+logsource:
+  category: image_load
+  product: windows
+detection:
+  selection_sideload_7z:
+    Image|endswith: '\7z.exe'
+    ImageLoaded|endswith: '\7z.dll'
+  selection_sideload_clink:
+    Image|endswith: '\clink_x86.exe'
+    ImageLoaded|endswith: '\clink_dll_x86.dll'
+  filter_sideload:
+    ImageLoaded|startswith:
+      - 'C:\Program Files\7-Zip\'
+      - 'C:\Program Files (x86)\7-Zip\'
+      - 'C:\Program Files\clink\'
+      - 'C:\Program Files (x86)\clink\'
+  condition: (selection_sideload_7z or selection_sideload_clink) and not filter_sideload
+level: high

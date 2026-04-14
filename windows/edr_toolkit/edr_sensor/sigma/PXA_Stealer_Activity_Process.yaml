@@ -1,0 +1,32 @@
+title: PXA Stealer Infostealer - Process Execution
+id: 2a1c8e7f-3b4d-4e9a-8f1b-9c0d7e6f5a4b-process
+status: experimental
+description: Detects command execution for decoding and extraction used by PXA Stealer.
+author: RW
+date: 2025-08-06
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_certutil:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains|all:
+      - '-decode'
+      - '.pdf'
+  selection_winrar:
+    Image|endswith:
+      - '\WinRAR.exe'
+      - '\rar.exe'
+      - '\images.png'
+    CommandLine|contains:
+      - ' x '
+      - ' e '
+    CommandLine|contains:
+      - 'C:\Users\Public'
+      - 'C:/Users/Public'
+  filter_winrar:
+    Image|startswith:
+      - 'C:\Program Files\'
+      - 'C:\Program Files (x86)\'
+  condition: selection_certutil or (selection_winrar and not filter_winrar)
+level: high

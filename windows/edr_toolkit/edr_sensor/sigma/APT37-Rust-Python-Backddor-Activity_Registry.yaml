@@ -1,0 +1,15 @@
+title: APT37 FadeStealer / Chinotto - Registry Persistence
+id: cbcd1782-6bc1-46e9-ad14-3f2d03f39189-registry
+status: experimental
+author: RW
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  reg_run:
+    TargetObject|endswith: '\Software\Microsoft\Windows\CurrentVersion\Run\OnedriveStandaloneUpdater'
+    Details|contains|all:
+      - 'mshta'
+      - 'http'
+  condition: reg_run
+level: high

@@ -1,0 +1,12 @@
+title: CL-CRI-1040 (Storm-2603) - AK47/X2ANYLOCK Ransomware
+id: b1446ffe-f1d7-46da-9f02-33d2b3139604-file
+status: experimental
+author: RW
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_ransomware:
+    TargetFilename|endswith: '.x2anylock'
+  condition: selection_ransomware
+level: high

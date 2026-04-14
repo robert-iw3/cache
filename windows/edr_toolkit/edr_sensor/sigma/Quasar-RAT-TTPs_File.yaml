@@ -1,0 +1,23 @@
+title: Quasar RAT TTPs - File Modifications
+id: 496218e6-882b-4979-9dba-90a096a3dde8-file
+status: experimental
+description: Detects startup folder persistence and FileZilla credential theft.
+author: RW
+logsource:
+  category: file_event
+  product: windows
+detection:
+  selection_startup:
+    TargetFilename|contains|all:
+      - '\Start Menu\Programs\Startup\'
+      - '.url'
+  selection_filezilla:
+    TargetFilename|contains:
+      - '\FileZilla\recentservers.xml'
+      - '\FileZilla\sitemanager.xml'
+  filter_filezilla:
+    Image|endswith:
+      - '\filezilla.exe'
+      - '\OneDrive.exe'
+  condition: selection_startup or (selection_filezilla and not filter_filezilla)
+level: high

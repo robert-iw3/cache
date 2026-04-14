@@ -1,0 +1,23 @@
+title: UNC6384 Mustang Panda Campaign - DLL Sideloading
+id: 1c851b18-8bac-4924-9c8f-56fe7fb9aba0-imageload
+status: experimental
+description: Detects a DLL side-loading execution pattern associated with the CANONSTAGER malware payload utilized by UNC6384 (Mustang Panda).
+author: RW
+date: 2025-08-26
+tags:
+  - attack.defense_evasion
+  - attack.t1574.002
+  - threat_actor.unc6384
+  - threat_actor.mustang_panda
+  - malware.canonstager
+logsource:
+  category: image_load
+  product: windows
+detection:
+  selection_sideloading:
+    Image|endswith: '\cnmpaui.exe'
+    ImageLoaded|endswith: '\cnmpaui.dll'
+  condition: selection_sideloading
+falsepositives:
+  - The DLL side-loading pattern is specific, but could potentially occur if a legitimate version of 'cnmpaui.exe' is exploited or natively loads this library.
+level: high

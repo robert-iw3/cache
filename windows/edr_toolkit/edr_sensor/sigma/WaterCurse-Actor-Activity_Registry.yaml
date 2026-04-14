@@ -1,0 +1,23 @@
+title: Water Curse Actor Activity - Registry UAC Bypass
+id: c03bbd4c-ff4d-4075-981e-50649a1a22aa-registry
+status: experimental
+description: Detects registry modifications associated with the Water Curse threat actor targeting the ms-settings protocol handler for UAC bypass.
+references:
+  - https://www.trendmicro.com/en_us/research/25/f/water-curse.html
+author: RW
+date: 2025-08-23
+tags:
+  - attack.privilege_escalation
+  - attack.t1548.002
+  - threat_actor.water_curse
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection_uac_bypass:
+    TargetObject|contains: '\Software\Classes\ms-settings\shell\open\command'
+    TargetObject|endswith:
+      - '\(Default)'
+      - '\DelegateExecute'
+  condition: selection_uac_bypass
+level: high
