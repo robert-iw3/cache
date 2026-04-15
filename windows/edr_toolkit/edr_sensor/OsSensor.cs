@@ -55,7 +55,7 @@ public class DeepVisibilitySensor {
     [DllImport("DeepSensor_ML_v2.1.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern void teardown_engine(IntPtr engine);
 
-    private static BlockingCollection<string> _mlWorkQueue = new BlockingCollection<string>(new ConcurrentQueue<string>());
+    private static BlockingCollection<string> _mlWorkQueue = new BlockingCollection<string>(new ConcurrentQueue<string>(), 50000);
     private static CancellationTokenSource _mlCancelSource = new CancellationTokenSource();
     private static IntPtr _mlEnginePtr = IntPtr.Zero;
 
@@ -204,7 +204,7 @@ public class DeepVisibilitySensor {
     }
 
     private static bool IsForgedReturnAddress(int pid, ulong returnAddr) {
-        if (returnAddr < 6) return true;
+        if (returnAddr < 10) return true;
 
         uint PROCESS_VM_READ_OPERATION = 0x0010 | 0x0008;
         IntPtr hProcess = OpenProcess(PROCESS_VM_READ_OPERATION, false, (uint)pid);
@@ -903,6 +903,12 @@ public class DeepVisibilitySensor {
             _mlEnginePtr = IntPtr.Zero;
             EnqueueDiag("[ML ENGINE] Native Rust DLL safely unloaded and DB flushed.");
         }
+
+        // 5. Dispose of the YARA rules objects
+        foreach (var rules in YaraMatrices.Values) {
+            try { rules.Dispose(); } catch {}
+        }
+        YaraMatrices.Clear();
 
         ProcessCache.Clear();
         ProcessStartTime.Clear();

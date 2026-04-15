@@ -52,7 +52,7 @@ param (
     [string]$OfflineRepoPath = "",
     [string]$MlBinaryName = "DeepSensor_ML_v2.1.dll",
     [string]$LogPath = "C:\ProgramData\DeepSensor\Data\DeepSensor_Events.jsonl",
-    [string]$TraceEventDllPath = "C:\Temp\TraceEventPackage\lib\net45\Microsoft.Diagnostics.Tracing.TraceEvent.dll"
+    [string]$TraceEventDllPath = "C:\ProgramData\DeepSensor\Dependencies\TE\lib\net45\Microsoft.Diagnostics.Tracing.TraceEvent.dll"
 )
 
 # DEVELOPER NOTE: O(1) Exclusions for Alternate Data Streams (ADS)
@@ -106,28 +106,6 @@ $script:logBatch = [System.Collections.Generic.List[string]]::new()
 # Dedicated UEBA JSONL pipeline
 $script:uebaBatch = [System.Collections.Generic.List[string]]::new()
 $UebaLogPath = $LogPath -replace "DeepSensor_Events.jsonl", "DeepSensor_UEBA_Events.jsonl"
-
-# ====================== CONSOLE UI & BUFFER SETUP ======================
-$Host.UI.RawUI.BackgroundColor = 'Black'
-$Host.UI.RawUI.ForegroundColor = 'Gray'
-Clear-Host
-
-$ESC = [char]27
-$cRed = "$ESC[91;40m"; $cCyan = "$ESC[96;40m"; $cGreen = "$ESC[92;40m"; $cYellow = "$ESC[93;40m"; $cDark = "$ESC[90;40m"; $cReset = "$ESC[0m$ESC[40m"
-
-try {
-    $ui = $Host.UI.RawUI
-    $buffer = $ui.BufferSize
-    $buffer.Width = 160
-    $buffer.Height = 3000
-    $ui.BufferSize = $buffer
-    $size = $ui.WindowSize
-    $size.Width = 160
-    $size.Height = 45
-    $ui.WindowSize = $size
-} catch {}
-
-[Console]::SetCursorPosition(0, 9)
 
 # Disable Windows QuickEdit Mode to prevent accidental process freezing
 $QuickEditCode = @"
@@ -235,29 +213,29 @@ function Protect-SensorEnvironment {
     $PathsToLock = @($ScriptDir, (Join-Path $ScriptDir $MlBinaryName), (Join-Path $ScriptDir "sigma"))
     foreach ($p in $PathsToLock) {
         if (Test-Path $p) {
-            icacls $p /inheritance:d /q | Out-Null
-            icacls $p /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q | Out-Null
-            icacls $p /grant "BUILTIN\Administrators:(OI)(CI)RX" /q | Out-Null
-            icacls $p /deny "BUILTIN\Administrators:(OI)(CI)W" /q | Out-Null
+            icacls $p /inheritance:d /q *>$null
+            icacls $p /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q *>$null
+            icacls $p /grant "BUILTIN\Administrators:(OI)(CI)RX" /q *>$null
+            icacls $p /deny "BUILTIN\Administrators:(OI)(CI)W" /q *>$null
         }
     }
 
     if (Test-Path $DataDir) {
         $currentUser = "$env:USERDOMAIN\$env:USERNAME"
 
-        icacls $DataDir /inheritance:d /q | Out-Null
-        icacls $DataDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q | Out-Null
-        icacls $DataDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q | Out-Null
-        icacls $DataDir /grant "${currentUser}:(OI)(CI)M" /q
+        icacls $DataDir /inheritance:d /q *>$null
+        icacls $DataDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q *>$null
+        icacls $DataDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q *>$null
+        icacls $DataDir /grant "${currentUser}:(OI)(CI)M" /q *>$null
 
         if ($null -ne $ReadAccessAccounts) {
             foreach ($account in $ReadAccessAccounts) {
                 if (-not [string]::IsNullOrWhiteSpace($account)) {
-                    icacls $DataDir /grant "${account}:(OI)(CI)RX" /q | Out-Null
+                    icacls $DataDir /grant "${account}:(OI)(CI)RX" /q *>$null
                 }
             }
         }
-        icacls $DataDir /remove "BUILTIN\Users" /q 2>$null
+        icacls $DataDir /remove "BUILTIN\Users" /q 2>$null *>$null
     }
 
     Write-Diag "    [+] Discretionary Access Control Lists (DACLs) locked down." "STARTUP"
@@ -299,7 +277,7 @@ function Initialize-Environment {
 }
 
 function Initialize-TraceEventDependency {
-    param([string]$ExtractBase = "C:\Temp\TraceEventPackage")
+    param([string]$ExtractBase = "C:\ProgramData\DeepSensor\Dependencies")
 
     Write-Diag "Validating C# ETW Dependencies..." "STARTUP"
     $ExpectedDllName = "Microsoft.Diagnostics.Tracing.TraceEvent.dll"
@@ -310,6 +288,19 @@ function Initialize-TraceEventDependency {
         $DllDir = Split-Path $ExistingDll.FullName -Parent
         $FastSerPath = Join-Path $DllDir "Microsoft.Diagnostics.FastSerialization.dll"
         $YaraPath = Join-Path $DllDir "libyara.NET.dll"
+
+        # Flatten unmanaged DLLs on fast-restart
+        $Amd64Dir = Join-Path $DllDir "amd64"
+        if (Test-Path $Amd64Dir) {
+            $UnmanagedToFlatten = @("KernelTraceControl.dll", "msdia140.dll", "yara.dll")
+            foreach ($lib in $UnmanagedToFlatten) {
+                $src = Join-Path $Amd64Dir $lib
+                $dst = Join-Path $DllDir $lib
+                if ((Test-Path $src) -and -not (Test-Path $dst)) {
+                    Copy-Item -Path $src -Destination $dst -Force
+                }
+            }
+        }
 
         if ((Test-Path $FastSerPath) -and (Test-Path $YaraPath)) {
             Write-Diag "[+] TraceEvent and Context-Aware YARA libraries validated." "STARTUP"
@@ -322,7 +313,11 @@ function Initialize-TraceEventDependency {
         if (Test-Path $ExtractBase) { Remove-Item $ExtractBase -Recurse -Force -ErrorAction SilentlyContinue }
         New-Item -ItemType Directory -Path $ExtractBase -Force | Out-Null
 
-        $TE_Zip = "$env:TEMP\TE.zip"; $UN_Zip = "$env:TEMP\UN.zip"
+        $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
+        if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
+
+        $TE_Zip = "$SecureStaging\TE.zip"
+        $UN_Zip = "$SecureStaging\UN.zip"
 
         if ($OfflineRepoPath) {
             Copy-Item (Join-Path $OfflineRepoPath "traceevent.nupkg") -Destination $TE_Zip -Force
@@ -338,13 +333,14 @@ function Initialize-TraceEventDependency {
         Expand-Archive -Path $UN_Zip -DestinationPath "$ExtractBase\UN" -Force
         Remove-Item $TE_Zip, $UN_Zip -Force -ErrorAction SilentlyContinue
 
-        $YARA_Zip = "$env:TEMP\YARA.zip"
+        $YARA_Zip = "$SecureStaging\YARA.zip"
         if ($OfflineRepoPath) {
             Copy-Item (Join-Path $OfflineRepoPath "libyaranet.nupkg") -Destination $YARA_Zip -Force
         } else {
             Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/libyara.NET/3.5.2" -OutFile $YARA_Zip -UseBasicParsing
         }
         Expand-Archive -Path $YARA_Zip -DestinationPath "$ExtractBase\YARA" -Force
+        Remove-Item $YARA_Zip -Force -ErrorAction SilentlyContinue
 
         $FoundDll = Get-ChildItem -Path "$ExtractBase\TE" -Filter $ExpectedDllName -Recurse -ErrorAction SilentlyContinue |
                     Where-Object { $_.FullName -match "net462|netstandard|net45" } | Select-Object -First 1
@@ -363,14 +359,20 @@ function Initialize-TraceEventDependency {
             )
 
             foreach ($h in $NativeHelpers) {
-                if ($h) { Copy-Item -Path $h.FullName -Destination $Amd64Dir -Force }
+                if ($h) {
+                    Copy-Item -Path $h.FullName -Destination $Amd64Dir -Force
+                    Copy-Item -Path $h.FullName -Destination $DllDir -Force
+                }
             }
 
             $ManagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "libyara.NET.dll" -Recurse | Select-Object -First 1
             $UnmanagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "yara.dll" -Recurse | Where-Object { $_.FullName -match "win-x64" } | Select-Object -First 1
 
             if ($ManagedYara) { Copy-Item -Path $ManagedYara.FullName -Destination $DllDir -Force }
-            if ($UnmanagedYara) { Copy-Item -Path $UnmanagedYara.FullName -Destination $Amd64Dir -Force }
+            if ($UnmanagedYara) {
+                Copy-Item -Path $UnmanagedYara.FullName -Destination $Amd64Dir -Force
+                Copy-Item -Path $UnmanagedYara.FullName -Destination $DllDir -Force
+            }
 
             Write-Diag "[+] TraceEvent library deployed successfully." "STARTUP"
             return $FoundDll.FullName
@@ -480,6 +482,37 @@ function Invoke-DefenseRollback {
 }
 
 # ====================== HUD DASHBOARD RENDERING ======================
+$Host.UI.RawUI.BackgroundColor = 'Black'
+$Host.UI.RawUI.ForegroundColor = 'Gray'
+Clear-Host
+
+$ESC      = [char]27
+# 24-bit TrueColor Neon Palette (R;G;B)
+$cCyan    = "$ESC[38;2;0;255;255m"
+$cGreen   = "$ESC[38;2;57;255;20m"
+$cOrange  = "$ESC[38;2;255;103;0m"
+$cGold    = "$ESC[38;2;255;215;0m"
+$cYellow  = "$ESC[38;2;255;255;51m"
+$cRed     = "$ESC[38;2;255;49;49m"
+$cWhite   = "$ESC[38;2;255;255;255m"
+$cDark    = "$ESC[38;2;80;80;80m"
+$cReset   = "$ESC[0m$ESC[40m"
+
+try {
+    $ui = $Host.UI.RawUI
+    $buffer = $ui.BufferSize
+    $buffer.Width = 160
+    $buffer.Height = 3000
+    $ui.BufferSize = $buffer
+    $size = $ui.WindowSize
+    $size.Width = 160
+
+    $size.Height = 55
+    $ui.WindowSize = $size
+} catch {}
+
+[Console]::SetCursorPosition(0, 9)
+
 $global:RecentAlerts = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 function Add-AlertMessage([string]$Message, [string]$ColorCode) {
@@ -487,43 +520,122 @@ function Add-AlertMessage([string]$Message, [string]$ColorCode) {
     $maxLen = 98 - $prefix.Length
     if ($Message.Length -gt $maxLen) { $Message = $Message.Substring(0, $maxLen - 3) + "..." }
     $global:RecentAlerts.Add([PSCustomObject]@{ Text = "$prefix$Message"; Color = $ColorCode })
-    if ($global:RecentAlerts.Count -gt 7) { $global:RecentAlerts.RemoveAt(0) }
+
+    # Expanded to keep the last 20 events in the queue
+    if ($global:RecentAlerts.Count -gt 20) { $global:RecentAlerts.RemoveAt(0) }
     Draw-AlertWindow
+}
+
+function Draw-Dashboard([long]$Events, [long]$MlEvals, [int]$Alerts, [string]$EtwHealth, [string]$MlHealth) {
+    $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
+    [Console]::SetCursorPosition(0, 0)
+
+    $mitreTags = @()
+    foreach ($alert in $global:RecentAlerts) {
+        if ($alert.Text -match "\[(T\d{4}(?:\.\d{3})?)\]") { $mitreTags += $matches[1] }
+    }
+    $uniqueMitre = if ($mitreTags.Count -gt 0) { ($mitreTags | Select-Object -Unique) -join ", " } else { "None" }
+    if ($uniqueMitre.Length -gt 25) { $uniqueMitre = $uniqueMitre.Substring(0, 22) + "..." }
+
+    $lastAction = "None"
+    for ($i = $script:logBatch.Count - 1; $i -ge 0; $i--) {
+        if ($script:logBatch[$i] -match "`"Action`":`"(.*?Quarantined.*?)`"") {
+            $lastAction = $matches[1]; break
+        }
+    }
+    if ($lastAction.Length -gt 25) { $lastAction = $lastAction.Substring(0, 22) + "..." }
+
+    $evPad       = $Events.ToString().PadRight(15)
+    $mlPad       = $MlEvals.ToString().PadRight(15)
+    $alertPad    = $Alerts.ToString().PadRight(15)
+    $defFiredPad = $global:TotalMitigations.ToString().PadRight(15)
+
+    $EtwState    = if ($EtwHealth -eq "Good") { "ONLINE" } else { "DEGRADED" }
+    $tamperPad   = $EtwState.PadRight(15)
+    $mlHealthPad = $MlHealth.PadRight(15)
+
+    $lastActionPad = $lastAction.PadRight(25)
+    $vectorsPad = $uniqueMitre.PadRight(25)
+
+    $TitlePlain = "  ██ Deep Sensor v2.1 | OS Behavioral Dashboard"
+    $StatusStr  = "  [ ENGINE STATUS ]               [ ACTIVE DEFENSE ]"
+    $Stats1Str  = "  Sensor Status : $tamperPad | Defenses Engaged : $defFiredPad"
+    $Stats2Str  = "  ML/UEBA       : $mlHealthPad | Total Alerts     : $alertPad"
+    $Stats3Str  = "  Total Events  : $evPad | Last Action      : $lastActionPad"
+    $Stats4Str  = "  ML/UEBA Evals : $mlPad | Vectors          : $vectorsPad"
+
+    $UIWidth = 100
+    $PadTitle  = " " * [math]::Max(0, ($UIWidth - $TitlePlain.Length))
+    $PadStatus = " " * [math]::Max(0, ($UIWidth - $StatusStr.Length))
+    $PadStats1 = " " * [math]::Max(0, ($UIWidth - $Stats1Str.Length))
+    $PadStats2 = " " * [math]::Max(0, ($UIWidth - $Stats2Str.Length))
+    $PadStats3 = " " * [math]::Max(0, ($UIWidth - $Stats3Str.Length))
+    $PadStats4 = " " * [math]::Max(0, ($UIWidth - $Stats4Str.Length))
+
+    $cGold  = "$([char]27)[38;2;255;215;0m"
+    $cOrange = "$([char]27)[38;2;255;103;0m"
+    $EColor = if ($EtwHealth -eq "Good") { $cGreen } else { $cGold }
+    $MColor = if ($MlHealth -match "Native DLL|Good") { $cGreen } else { $cGold }
+
+    Write-Host "$cCyan╔════════════════════════════════════════════════════════════════════════════════════════════════════╗$cReset"
+    Write-Host "$cCyan║$cReset  $cGold██ Deep Sensor v2.1$cReset | OS Behavioral Dashboard$PadTitle$cCyan║$cReset"
+    Write-Host "$cCyan╠════════════════════════════════════════════════════════════════════════════════════════════════════╣$cReset"
+    Write-Host "$cCyan║$cReset  $cOrange[ ENGINE STATUS ]$cReset               $cOrange[ ACTIVE DEFENSE ]$cReset$PadStatus$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  Sensor Status : $EColor$tamperPad$cReset | Defenses Engaged : $cYellow$defFiredPad$cReset$PadStats1$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  ML/UEBA       : $MColor$mlHealthPad$cReset | Total Alerts     : $cGold$alertPad$cReset$PadStats2$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  Total Events  : $cWhite$evPad$cReset | Last Action      : $cWhite$lastActionPad$cReset$PadStats3$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  ML/UEBA Evals : $cYellow$mlPad$cReset | Vectors          : $cWhite$vectorsPad$cReset$PadStats4$cCyan║$cReset"
+    Write-Host "$cCyan╚════════════════════════════════════════════════════════════════════════════════════════════════════╝$cReset"
+
+    if ($curTop -lt 10) { $curTop = 10 }
+    [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
 function Draw-AlertWindow {
     $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
     $UIWidth = 100
-    [Console]::SetCursorPosition(0, 24)
 
-    $logTrunc = if ($LogPath.Length -gt 60) { "..." + $LogPath.Substring($LogPath.Length - 57) } else { $LogPath }
-    $headerPlain = "  [ RECENT DETECTIONS ] | Log: $logTrunc"
+    # Moved up to slot perfectly under the Dashboard
+    [Console]::SetCursorPosition(0, 10)
+
+    $cGreen = "$([char]27)[38;2;57;255;20m"
+    $headerPlain = "  [ LIVE THREAT TELEMETRY ]"
     $padHeader = " " * [math]::Max(0, ($UIWidth - $headerPlain.Length))
 
     Write-Host "$cCyan╔════════════════════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-    Write-Host "$cCyan║$cReset  $cRed[ RECENT DETECTIONS ]$cReset | Log: $cDark$logTrunc$cReset$padHeader$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  $cGreen[ LIVE THREAT TELEMETRY ]$cReset$padHeader$cCyan║$cReset"
     Write-Host "$cCyan╠════════════════════════════════════════════════════════════════════════════════════════════════════╣$cReset"
 
-    for ($i = 0; $i -lt 7; $i++) {
+    for ($i = 0; $i -lt 20; $i++) {
         if ($i -lt $global:RecentAlerts.Count) {
             $item = $global:RecentAlerts[$i]
-            $pad = " " * [math]::Max(0, (98 - $item.Text.Length))
+            # Strip ANSI codes from length calculation to preserve original right-side padding math
+            $cleanText = $item.Text -replace "`e\[[0-9;]*m",""
+            $pad = " " * [math]::Max(0, (98 - $cleanText.Length))
             Write-Host "$cCyan║$cReset  $($item.Color)$($item.Text)$cReset$pad$cCyan║$cReset"
         } else {
             Write-Host "$cCyan║$cReset                                                                                                    $cCyan║$cReset"
         }
     }
+
+    Write-Host "$cCyan╠════════════════════════════════════════════════════════════════════════════════════════════════════╣$cReset"
+    $ControlsPlain = "  [ I ] UPDATE SIGMA  |  [ R ] ROLLBACK DEFENSE  |  [ CTRL + C ] TEARDOWN SEQUENCE"
+    $PadControls   = " " * [math]::Max(0, ($UIWidth - $ControlsPlain.Length))
+    Write-Host "$cCyan║$cReset$cWhite$ControlsPlain$cReset$PadControls$cCyan║$cReset"
     Write-Host "$cCyan╚════════════════════════════════════════════════════════════════════════════════════════════════════╝$cReset"
 
-    [Console]::SetCursorPosition(0, 32)
+    [Console]::SetCursorPosition(0, 36)
     [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
 function Draw-StartupWindow {
     $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
     $UIWidth = 100
-    [Console]::SetCursorPosition(0, 9)
 
+    # Shifted entirely down below the Telemetry Pane and Controls
+    [Console]::SetCursorPosition(0, 37)
+
+    $cGreen = "$([char]27)[38;2;57;255;20m"
     $HeaderPlain = "  [ SENSOR INITIALIZATION ]"
     $PadHeader = " " * [math]::Max(0, ($UIWidth - $HeaderPlain.Length))
 
@@ -546,49 +658,6 @@ function Draw-StartupWindow {
     }
     Write-Host "$cCyan╚════════════════════════════════════════════════════════════════════════════════════════════════════╝$cReset"
 
-    [Console]::SetCursorPosition($curLeft, $curTop)
-}
-
-function Draw-Dashboard([long]$Events, [long]$MlEvals, [int]$Alerts, [string]$EtwHealth, [string]$MlHealth) {
-    $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
-    [Console]::SetCursorPosition(0, 0)
-
-    $evPad       = $Events.ToString().PadRight(9)
-    $mlPad       = $MlEvals.ToString().PadRight(9)
-    $alertPad    = $Alerts.ToString().PadRight(9)
-    $defFiredPad = $global:TotalMitigations.ToString().PadRight(9)
-    $tamperPad   = $EtwHealth.PadRight(9)
-    $mlHealthPad = $MlHealth.PadRight(9)
-
-    $TitlePlain = "  ⚡ Deep Sensor v2.1 | OS BEHAVIORAL DASHBOARD"
-    $StatusStr  = "  [ LIVE TELEMETRY ]"
-    $Stats1Str  = "  OS Events Parsed : $evPad | Active Alerts    : $alertPad"
-    $Stats2Str  = "  ML Batches Sent  : $mlPad | Defenses Fired   : $defFiredPad"
-    $TamperStr  = "  ETW Sensor State : $tamperPad | ML Math Engine   : $mlHealthPad"
-
-    $UIWidth = 100
-    $PadTitle  = " " * [math]::Max(0, ($UIWidth - $TitlePlain.Length - 1))
-    $PadStatus = " " * [math]::Max(0, ($UIWidth - $StatusStr.Length))
-    $PadStats1 = " " * [math]::Max(0, ($UIWidth - $Stats1Str.Length))
-    $PadStats2 = " " * [math]::Max(0, ($UIWidth - $Stats2Str.Length))
-    $PadTamper = " " * [math]::Max(0, ($UIWidth - $TamperStr.Length))
-
-    $EColor = if ($EtwHealth -eq "Good") { $cGreen } else { $cRed }
-    $MColor = if ($MlHealth -match "Native DLL|Good") { $cGreen } else { $cRed }
-
-    Write-Host "$cCyan╔════════════════════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-    Write-Host "$cCyan║$cReset  $cRed⚡ Deep Sensor v2.1$cReset | OS BEHAVIORAL DASHBOARD$PadTitle$cCyan║$cReset"
-    Write-Host "$cCyan╠════════════════════════════════════════════════════════════════════════════════════════════════════╣$cReset"
-    Write-Host "$cCyan║$cReset  $cDark[ LIVE TELEMETRY ]$cReset$PadStatus$cCyan║$cReset"
-    Write-Host "$cCyan║$cReset  OS Events Parsed : $cCyan$evPad$cReset | Active Alerts    : $cRed$alertPad$cReset$PadStats1$cCyan║$cReset"
-    Write-Host "$cCyan║$cReset  Native ML Evals  : $cYellow$mlPad$cReset | Defenses Fired   : $cYellow$defFiredPad$cReset$PadStats2$cCyan║$cReset"
-    Write-Host "$cCyan║$cReset  ETW Sensor State : $EColor$tamperPad$cReset | ML Math Engine   : $MColor$mlHealthPad$cReset$PadTamper$cCyan║$cReset"
-    $ControlsPlain = "  [ I ] INJECT SIGMA  |  [ R ] ROLLBACK DEFENSE  |  [ CTRL+C ] TEARDOWN SENSOR"
-    $PadControls   = " " * [math]::Max(0, ($UIWidth - $ControlsPlain.Length))
-    Write-Host "$cCyan║$cReset$cDark$ControlsPlain$cReset$PadControls$cCyan║$cReset"
-    Write-Host "$cCyan╚════════════════════════════════════════════════════════════════════════════════════════════════════╝$cReset"
-
-    if ($curTop -lt 9) { $curTop = 9 }
     [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
@@ -960,7 +1029,7 @@ function Initialize-SigmaEngine {
 # ====================== SENSOR INITIALIZATION ======================
 $ValidMlBinaryPath = Initialize-Environment
 
-$ActualDllPath = Initialize-TraceEventDependency -ExtractBase "C:\Temp\TraceEventPackage"
+$ActualDllPath = Initialize-TraceEventDependency -ExtractBase "C:\ProgramData\DeepSensor\Dependencies"
 if (-not $ActualDllPath) {
     Write-Host "`n[!] CRITICAL: TraceEvent dependency missing. Cannot start ETW sensor. Exiting." -ForegroundColor Red
     Exit
@@ -1073,7 +1142,7 @@ try {
 
         if (($now - $LastPolicySync).TotalMinutes -ge 60) {
             $LastPolicySync = $now
-            icacls $ScriptDir /reset /T /C /Q | Out-Null
+            icacls $ScriptDir /reset /T /C /Q *>$null
             # 1. Fetch, Extract, and Compile the heavy startup matrices
             $EngineData = Initialize-SigmaEngine
             # 2. Pass the compiled arrays natively to the C# Engine
@@ -1239,7 +1308,7 @@ try {
         # ETW HEALTH CANARY: Write a temp file every 60 seconds to prove the Kernel Listener is alive
         if (($now - $LastHeartbeatWrite).TotalSeconds -ge 60) {
             $LastHeartbeatWrite = $now
-            $CanaryPath = Join-Path $env:TEMP "deepsensor_canary.tmp"
+            $CanaryPath = Join-Path "C:\ProgramData\DeepSensor\Data" "deepsensor_canary.tmp"
             $null = New-Item -ItemType File -Path $CanaryPath -Force
             Remove-Item -Path $CanaryPath -Force -ErrorAction SilentlyContinue
         }
@@ -1269,15 +1338,15 @@ try {
     Write-Host "    [*] Unlocking project directory permissions..." -ForegroundColor Gray
     $null = icacls $ScriptDir /reset /T /C /Q
 
-    Write-Host "    [*] Cleaning up temporary library artifacts..." -ForegroundColor Gray
-    $TempLibPath = "C:\Temp\TraceEventPackage"
-    if (Test-Path $TempLibPath) {
-        Remove-Item -Path $TempLibPath -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "    [*] Cleaning up centralized library dependencies..." -ForegroundColor Gray
+    $DependenciesPath = "C:\ProgramData\DeepSensor\Dependencies"
+    if (Test-Path $DependenciesPath) {
+        Remove-Item -Path $DependenciesPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    $StrayNetStandard = "C:\Temp\netstandard.dll"
-    if (Test-Path $StrayNetStandard) {
-        Remove-Item -Path $StrayNetStandard -Force -ErrorAction SilentlyContinue
+    $StagingPath = "C:\ProgramData\DeepSensor\Staging"
+    if (Test-Path $StagingPath) {
+        Remove-Item -Path "$StagingPath\*.zip" -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host "`n[+] Sensor Teardown Complete. Log artifacts preserved in C:\ProgramData\DeepSensor\Logs & \Data." -ForegroundColor Green
