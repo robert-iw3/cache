@@ -21,9 +21,9 @@
 
 $ScriptDir = Split-Path $PSCommandPath -Parent
 $ConfigPath = Join-Path $ScriptDir "config.ini"
-$LogPath = "C:\Temp\OutboundNetwork_Monitor.log"
+$LogPath = "C:\ProgramData\C2Sensor\Logs\OutboundNetwork_Monitor.log"
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$ReportOut = Join-Path $ScriptDir "threat_intel_report_$Timestamp.txt"
+$ReportOut = "C:\ProgramData\C2Sensor\Data\threat_intel_report_latest.txt"
 
 param([switch]$Orchestrated)
 

@@ -1,7 +1,7 @@
-# Program Increment (PI) Plan: C2 Hunter V6 "Offensive-Defense & Infrastructure Exploitation"
+# Program Increment (PI) Plan: C2 Sensor V2 "Offensive-Defense & Infrastructure Exploitation"
 
 ## 1. PI Vision and Objectives
-**Vision:** Elevate the C2 Hunter architecture from a robust Endpoint Detection and Response (EDR) engine into an active exploitation and deception platform. V6 will expand visibility into server-side applications, track internal peer-to-peer lateral movement, and transition the defense strategy from simply blocking threats to actively fingerprinting and sinkholing adversary infrastructure to extract decrypted stage-2 configurations.
+**Vision:** Elevate the C2 Sensor architecture from a robust Endpoint Detection and Response (EDR) engine into an active exploitation and deception platform. V6 will expand visibility into server-side applications, track internal peer-to-peer lateral movement, and transition the defense strategy from simply blocking threats to actively fingerprinting and sinkholing adversary infrastructure to extract decrypted stage-2 configurations.
 
 **Committed PI Objectives:**
 1. Deliver Server-Side Application Defense to detect web shells and lateral movement via common web servers and databases.

@@ -5,10 +5,10 @@
 #Requires -RunAsAdministrator
 
 param (
-    [string]$CorrelationReport = "C:\ProgramData\C2Sensor\Data\Correlated_C2_Vectors.txt",
-    [string]$ContainmentLog = "C:\ProgramData\C2Sensor\Logs\C2_Containment_Actions.log",
+    [string]$CorrelationReport = "C:\Temp\Correlated_C2_Vectors.txt",
+    [string]$ContainmentLog = "C:\Temp\C2_Containment_Actions.log",
     [string]$TriageScriptPath = "Invoke-C2ForensicTriage.ps1",
-    [string]$EvidenceFolder = "C:\ProgramData\C2Sensor\Evidence\DFIR_Collect",
+    [string]$EvidenceFolder = "C:\Temp\DFIR_Collect",
     [int]$RiskThreshold = 100,
     [switch]$ArmedMode,
     [switch]$Orchestrated
@@ -27,7 +27,7 @@ $ESC = [char]27
 $cRed = "$ESC[38;2;255;70;85m"; $cCyan = "$ESC[38;2;0;200;255m"; $cGreen = "$ESC[38;2;10;210;130m"; $cDark = "$ESC[38;2;100;100;100m"; $cYellow = "$ESC[38;2;255;180;50m"; $cReset = "$ESC[0m"
 
 if (-not $Orchestrated) {
-    $Host.UI.RawUI.WindowTitle = "V1 DFIR // THREAT CONTAINMENT ENGINE"
+    $Host.UI.RawUI.WindowTitle = "V5 DFIR // THREAT CONTAINMENT ENGINE"
     [Console]::CursorVisible = $false
     Clear-Host
     [Console]::SetCursorPosition(0, 6)
@@ -43,7 +43,7 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
         # --- DYNAMIC PADDING MATH ---
         # 1. Define the raw, uncolored strings so PowerShell can count the EXACT character length
         $EngineName = "THREAT CONTAINMENT ENGINE"
-        $TitleStr   = "  ⚡ C2 SENSOR V1  | $EngineName"
+        $TitleStr   = "  ⚡ C2 HUNTER V5  | $EngineName"
         $StatsStr   = "  Progress : $Progress% | Targets: $Threats"
 
         # 2. Prevent Action text from overflowing the 86-character boundary
@@ -57,8 +57,8 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
         $PadAction = " " * [math]::Max(0, (86 - $ActionStr.Length))
 
         Write-Host "$cCyan╔══════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-        Write-Host "$cCyan║$cReset  $cRed⚡ C2 SENSOR V1$cReset | $EngineName$PadTitle$cCyan║$cReset"
-        Write-Host "$cCyan╠═════════════════════════════════════════════════════════════════════════════════════╣$cReset"
+        Write-Host "$cCyan║$cReset  $cRed⚡ C2 HUNTER V5$cReset | $EngineName$PadTitle$cCyan║$cReset"
+        Write-Host "$cCyan╠══════════════════════════════════════════════════════════════════════════════════════╣$cReset"
         Write-Host "$cCyan║$cReset  Progress : $cCyan$Progress%$cReset | Targets: $cRed$Threats$cReset$PadStats$cCyan║$cReset"
         Write-Host "$cCyan║$cReset  Action   : $cYellow$ActionText$cReset$PadAction$cCyan║$cReset"
         Write-Host "$cCyan╚══════════════════════════════════════════════════════════════════════════════════════╝$cReset"

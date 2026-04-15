@@ -7,15 +7,15 @@
     generate a prioritized list of high-risk vectors requiring immediate SOC investigation.
 .NOTES
     Author: Robert Weber
-    Version: 1.0 (V1 Companion)
+    Version: 1.0 (V5 Companion)
 #>
 #Requires -RunAsAdministrator
 
 param (
-    [string]$MonitorLogPath = "C:\ProgramData\C2Sensor\Logs\OutboundNetwork_Monitor.log",
-    [string]$JsonlLogPath   = "C:\ProgramData\C2Sensor\Logs\C2Sensor_Alerts.jsonl",
-    [string]$CtiReportPath  = "C:\ProgramData\C2Sensor\Data\threat_intel_report_latest.txt",
-    [string]$OutputReport   = "C:\ProgramData\C2Sensor\Data\Correlated_C2_Vectors.txt",
+    [string]$MonitorLogPath = "C:\Temp\OutboundNetwork_Monitor.log",
+    [string]$JsonlLogPath   = "C:\Temp\C2KernelMonitoring_v5.jsonl",
+    [string]$CtiReportPath  = "C:\Temp\threat_intel_report_20260404_164702.txt",
+    [string]$OutputReport   = "C:\Temp\Correlated_C2_Vectors.txt",
     [switch]$Orchestrated
 )
 

@@ -12,13 +12,13 @@
     5. Uninstalls and cleans up temporary files
 .NOTES
     Author: Robert Weber
-    V1
+    V5
 #>
 
 param (
     [Parameter(Mandatory=$true)]
     [string]$DumpPath,
-    [string]$ReportDir = "C:\ProgramData\C2Sensor\Evidence\DFIR_Collect",
+    [string]$ReportDir = "C:\temp",
     [string]$SymbolPath = "srv*C:\Symbols*https://msdl.microsoft.com/download/symbols",
     [switch]$Orchestrated
 )

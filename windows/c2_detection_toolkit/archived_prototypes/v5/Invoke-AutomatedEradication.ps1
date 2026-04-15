@@ -13,13 +13,13 @@
     4. Reboot option
 .NOTES
     Author: Robert Weber
-    Version: 1.0
+    Version: 5.0
 #>
 #Requires -RunAsAdministrator
 
 param (
-    [string]$ReportCSV = "C:\ProgramData\C2Sensor\Evidence\DFIR_Collect\advanced_memory_injections.csv",
-    [string]$EvidenceFolder = "C:\ProgramData\C2Sensor\Evidence\DFIR_Collect",
+    [string]$ReportCSV = "C:\Temp\advanced_memory_injections.csv",
+    [string]$EvidenceFolder = "C:\Temp\DFIR_Evidence",
     [switch]$AutoReboot,
     [switch]$ArmedMode,
     [switch]$Orchestrated,
@@ -30,7 +30,7 @@ $ESC = [char]27
 $cRed = "$ESC[38;2;255;70;85m"; $cCyan = "$ESC[38;2;0;200;255m"; $cGreen = "$ESC[38;2;10;210;130m"
 $cDark = "$ESC[38;2;100;100;100m"; $cYellow = "$ESC[38;2;255;180;50m"; $cReset = "$ESC[0m"
 
-$Host.UI.RawUI.WindowTitle = "V1 DFIR // ORCHESTRATED ERADICATION SWEEPER"
+$Host.UI.RawUI.WindowTitle = "V5 DFIR // ORCHESTRATED ERADICATION SWEEPER"
 [Console]::CursorVisible = $false
 Clear-Host
 [Console]::SetCursorPosition(0, 6)
@@ -41,7 +41,7 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
     } else {
         $curLeft = [Console]::CursorLeft; $curTop = [Console]::CursorTop
         [Console]::SetCursorPosition(0, 0)
-        $TitleStr = " ⚡ C2 SENSOR V1 | ORCHESTRATED ERADICATION SWEEPER"
+        $TitleStr = " ⚡ C2 HUNTER V5 | ORCHESTRATED ERADICATION SWEEPER"
         $StatsStr = " Progress : $Progress% | Targets: $Threats"
         if ($ActionText.Length -gt 70) { $ActionText = $ActionText.Substring(0,67) + "..." }
         $ActionStr = " Action : $ActionText"
@@ -49,7 +49,7 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
         $PadStats = " " * [math]::Max(0, (86 - $StatsStr.Length))
         $PadAction = " " * [math]::Max(0, (86 - $ActionStr.Length))
         Write-Host "$cCyan╔══════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-        Write-Host "$cCyan║$cReset $cRed⚡ C2 SENSOR V1$cReset | ORCHESTRATED ERADICATION SWEEPER$PadTitle$cCyan║$cReset"
+        Write-Host "$cCyan║$cReset $cRed⚡ C2 HUNTER V5$cReset | ORCHESTRATED ERADICATION SWEEPER$PadTitle$cCyan║$cReset"
         Write-Host "$cCyan╠══════════════════════════════════════════════════════════════════════════════════════╣$cReset"
         Write-Host "$cCyan║$cReset Progress : $cCyan$Progress%$cReset | Targets: $cRed$Threats$cReset$PadStats$cCyan║$cReset"
         Write-Host "$cCyan║$cReset Action : $cYellow$ActionText$cReset$PadAction$cCyan║$cReset"
@@ -60,7 +60,7 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
 
 $EvidenceFolder = if (-not (Test-Path $EvidenceFolder)) { New-Item -ItemType Directory -Force -Path $EvidenceFolder | Out-Null; $EvidenceFolder }
 $LogFile = Join-Path $EvidenceFolder "Eradication_Log.txt"
-"[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] V1 ERADICATION SWEEP INITIATED" | Out-File -FilePath $LogFile -Force
+"[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] V5 ERADICATION SWEEP INITIATED" | Out-File -FilePath $LogFile -Force
 
 Update-UI 5 0 "Downloading latest vulnerable driver database (loldrivers.io)..."
 

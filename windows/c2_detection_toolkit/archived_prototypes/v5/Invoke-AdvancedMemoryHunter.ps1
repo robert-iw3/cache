@@ -14,15 +14,15 @@
 
 .NOTES
     Author: Robert Weber
-    Version: 1.0
+    Version: 5.0
 #>
 #Requires -RunAsAdministrator
 
 param (
     [int[]]$ProcessIds = $null,
     [switch]$ScanAll,
-    [string]$ArtifactDirectory = "C:\ProgramData\C2Sensor\Evidence\DFIR_Collect",
-    [switch]$Orchestrated
+    [string]$ArtifactDirectory = "C:\Temp\DFIR_Collect",
+    [switch]$Orchestrated # <-- REQUIRED FOR DUAL MODE
 )
 
 # =================================================================
@@ -37,7 +37,7 @@ $cYellow = "$ESC[93;40m"
 $cReset  = "$ESC[0m$ESC[40m"
 
 if (-not $Orchestrated) {
-    $Host.UI.RawUI.WindowTitle = "V1 DFIR // ADVANCED MEMORY HUNTER"
+    $Host.UI.RawUI.WindowTitle = "V5 DFIR // ADVANCED MEMORY HUNTER"
     [Console]::CursorVisible = $false
     Clear-Host
     [Console]::SetCursorPosition(0, 6) # Reserve 6 lines for Standalone HUD
@@ -54,7 +54,7 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
 
         # --- DYNAMIC PADDING MATH ---
         $EngineName = "ADVANCED MEMORY FORENSICS ENGINE"
-        $TitleStr   = "  ⚡ C2 SENSOR V1  | $EngineName"
+        $TitleStr   = "  ⚡ C2 HUNTER V5  | $EngineName"
         $StatsStr   = "  Progress : $Progress% | Detections: $Threats"
 
         # Manage Action text length to prevent line-wrapping
@@ -68,7 +68,7 @@ function Update-UI([int]$Progress, [int]$Threats, [string]$ActionText) {
 
         # --- RENDER DASHBOARD ---
         Write-Host "$cCyan╔══════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-        Write-Host "$cCyan║$cReset  $cRed⚡ C2 SENSOR V1$cReset | $EngineName$PadTitle$cCyan║$cReset"
+        Write-Host "$cCyan║$cReset  $cRed⚡ C2 HUNTER V5$cReset | $EngineName$PadTitle$cCyan║$cReset"
         Write-Host "$cCyan╠══════════════════════════════════════════════════════════════════════════════════════╣$cReset"
         Write-Host "$cCyan║$cReset  Progress : $cCyan$Progress%$cReset | Detections: $cRed$Threats$cReset$PadStats$cCyan║$cReset"
         Write-Host "$cCyan║$cReset  Action   : $cYellow$ActionText$cReset$PadAction$cCyan║$cReset"

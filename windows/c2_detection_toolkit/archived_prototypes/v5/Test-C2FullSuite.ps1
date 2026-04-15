@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    AV-Safe Network Validation Suite for Kernel C2 Beacon Sensor v1
+    AV-Safe Network Validation Suite for Kernel C2 Beacon Hunter v5
 #>
 #Requires -RunAsAdministrator
 
 Write-Host "=============================================================" -ForegroundColor Cyan
-Write-Host "   C2 SENSOR V1: FULL PIPELINE VALIDATION SUITE" -ForegroundColor Cyan
+Write-Host "   C2 HUNTER V5: FULL PIPELINE VALIDATION SUITE" -ForegroundColor Cyan
 Write-Host "=============================================================" -ForegroundColor Cyan
 
 function Send-RawBeacon {
@@ -87,4 +87,4 @@ for ($i = 1; $i -le 20; $i++) {
 }
 Write-Host " Done." -ForegroundColor Green
 
-Write-Host "`n[SUCCESS] V1 Validation Suite Completed. Monitor your Daemon HUD for the final ML detections!" -ForegroundColor Green
+Write-Host "`n[SUCCESS] V5 Validation Suite Completed. Monitor your Daemon HUD for the final ML detections!" -ForegroundColor Green

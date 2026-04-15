@@ -1,8 +1,8 @@
 ﻿<#
 .SYNOPSIS
-    DFIR Automated Response Orchestrator
+    DFIR Automated Response Orchestrator (V5)
 .DESCRIPTION
-    This script chains the four V1 Post-Detection DFIR phases:
+    This script chains the four V5 Post-Detection DFIR phases:
     0. Configuration & API Key Validation
     1. Threat Intelligence Enrichment (CTI)
     2. Tri-Lateral Vector Correlation (Target Identification)
@@ -13,20 +13,20 @@
     forensic artifacts and logs to that centralized location.
 .NOTES
     Author: Robert Weber
-    Version: 1.0
+    Version: 5.0
 #>
 #Requires -RunAsAdministrator
 
 param(
     [switch]$ArmedMode,
-    [string]$EvidenceFolder = "C:\ProgramData\C2Sensor\Evidence\DFIR_$(Get-Date -Format 'yyyyMMdd_HHmm')",
+    [string]$EvidenceFolder = "C:\Temp\DFIR_Evidence_$(Get-Date -Format 'yyyyMMdd_HHmm')",
     [switch]$Orchestrated
 )
 
 $ScriptDir = Split-Path $PSCommandPath -Parent
 if (-not (Test-Path $EvidenceFolder)) { New-Item -ItemType Directory -Path $EvidenceFolder -Force | Out-Null }
 
-$Host.UI.RawUI.WindowTitle = "V1 DFIR // MASTER ORCHESTRATOR"
+$Host.UI.RawUI.WindowTitle = "V5 DFIR // MASTER ORCHESTRATOR"
 $ESC = [char]27
 $cRed = "$ESC[38;2;255;70;85m"; $cCyan = "$ESC[38;2;0;200;255m"; $cGreen = "$ESC[38;2;10;210;130m"; $cDark = "$ESC[38;2;100;100;100m"; $cYellow = "$ESC[38;2;255;180;50m"; $cReset = "$ESC[0m"
 
@@ -42,7 +42,7 @@ function Draw-MasterDashboard {
 
     # --- DYNAMIC PADDING MATH ---
     # 1. Define uncolored strings to measure exact lengths
-    $TitleStr  = "  ⚡ C2 SENSOR V1  | MASTER DFIR ORCHESTRATOR ENGINE"
+    $TitleStr  = "  ⚡ C2 HUNTER V5  | MASTER DFIR ORCHESTRATOR ENGINE"
     $StatusStr = "  [ PIPELINE STATUS ]"
     $StatsStr  = "  Phase  : $Phase / $TotalPhases | Targets: $Threats | Progress: $SubProgress%"
 
@@ -58,8 +58,8 @@ function Draw-MasterDashboard {
 
     # --- RENDER DASHBOARD ---
     Write-Host "$cCyan╔══════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-    Write-Host "$cCyan║$cReset  $cRed⚡ C2 SENSOR V1$cReset | MASTER DFIR ORCHESTRATOR ENGINE$PadTitle$cCyan║$cReset"
-    Write-Host "$cCyan╠═════════════════════════════════════════════════════════════════════════════════════╣$cReset"
+    Write-Host "$cCyan║$cReset  $cRed⚡ C2 HUNTER V5$cReset | MASTER DFIR ORCHESTRATOR ENGINE$PadTitle$cCyan║$cReset"
+    Write-Host "$cCyan╠══════════════════════════════════════════════════════════════════════════════════════╣$cReset"
     Write-Host "$cCyan║$cReset  $cDark[ PIPELINE STATUS ]$cReset$PadStatus$cCyan║$cReset"
 
     # Stats Line (Phase / Targets / Progress)
