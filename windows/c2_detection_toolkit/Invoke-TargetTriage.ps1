@@ -3,7 +3,7 @@
     Targeted Forensic Triage Script - In-Memory C2 & Fast-Flux Detection
 .DESCRIPTION
     Audits live system state for behavioral indicators of advanced C2 frameworks,
-    specifically focusing on process injection (svchost masquerading) and 
+    specifically focusing on process injection (svchost masquerading) and
     Fast-Flux network infrastructure evasion.
 #>
 #Requires -RunAsAdministrator
@@ -22,13 +22,13 @@ function Invoke-TargetTriage {
     # PHASE 1: SVCHOST & PROCESS INJECTION HUNTING
     # =====================================================================
     Write-Host "    -> Auditing core system processes for injection indicators..." -ForegroundColor Gray
-    
+
     # Get all processes with their command lines (requires WMI/CIM for reliable extraction)
     $Processes = Get-CimInstance Win32_Process
-    
+
     foreach ($Proc in $Processes) {
         $Flags = @()
-        
+
         # Indicator 1: svchost.exe running without the standard service (-k) arguments
         if ($Proc.Name -eq "svchost.exe") {
             if ([string]::IsNullOrWhiteSpace($Proc.CommandLine) -or $Proc.CommandLine -notmatch "-k ") {
@@ -57,8 +57,8 @@ function Invoke-TargetTriage {
     # PHASE 2: FAST-FLUX & NETWORK CHURN ANALYSIS
     # =====================================================================
     Write-Host "    -> Correlating active TCP connections for Fast-Flux churn..." -ForegroundColor Gray
-    
-    $ActiveConnections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | 
+
+    $ActiveConnections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
                          Where-Object { $_.RemoteAddress -notmatch "^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^127\." }
 
     $NetworkMap = @{}

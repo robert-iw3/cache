@@ -51,7 +51,7 @@ $ConsolidatedData = @()
 
 foreach ($alert in $UniqueAlerts) {
     $procName = $alert.ProcessName
-    
+
     if ([string]::IsNullOrWhiteSpace($procName) -or $procName -match "(?i)^terminated$") {
         $ConsolidatedData += [PSCustomObject]@{
             Alert_Type      = $alert.EventType

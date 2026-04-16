@@ -1,13 +1,10 @@
 <#
 .SYNOPSIS
     C2 Beacon Sensor v1 - Air-Gap Package Builder
-
 .DESCRIPTION
-    Executes on an internet-connected staging system to gather all required dependencies,
-    TraceEvent packages, and the pre-compiled Rust ML binary. Compresses them into a
-    portable ZIP archive for secure, offline deployment.
-
-@RW
+    Stages all core binaries, TraceEvent dependencies, and the full suite of
+    Suricata and SigmaHQ rules. Generates a per-file hash manifest and a
+    final ZIP hash for secure offline deployment.
 #>
 
 param(
@@ -20,6 +17,8 @@ if (Test-Path $StagingDir) { Remove-Item -Path $StagingDir -Recurse -Force }
 $null = New-Item -ItemType Directory -Path $StagingDir -Force
 
 $TransitManifest = @{}
+
+# Function to register file hashes for the manifest
 function Register-FileHash([string]$FilePath, [string]$LogicalName) {
     if (Test-Path $FilePath) {
         $hash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash
@@ -29,62 +28,88 @@ function Register-FileHash([string]$FilePath, [string]$LogicalName) {
 }
 
 # ============================================================================
-# 1. C# ETW DEPENDENCIES (TraceEvent is required for ETW ingestion)
+# 1. CORE DEPENDENCIES (TraceEvent)
 # ============================================================================
-Write-Host "`n[*] Downloading C# TraceEvent & Unsafe NuGet Packages (v3.2.2)..." -ForegroundColor Gray
-$TeUrl = "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.2"
-$UnUrl = "https://www.nuget.org/api/v2/package/System.Runtime.CompilerServices.Unsafe/5.0.0"
-$TeOut = Join-Path $StagingDir "traceevent.nupkg"
-$UnOut = Join-Path $StagingDir "unsafe.nupkg"
-
-Invoke-WebRequest -Uri $TeUrl -OutFile $TeOut
-Invoke-WebRequest -Uri $UnUrl -OutFile $UnOut
-Register-FileHash -FilePath $TeOut -LogicalName "TraceEvent_NuGet"
-Register-FileHash -FilePath $UnOut -LogicalName "Unsafe_NuGet"
-
-# ============================================================================
-# 2. THREAT INTELLIGENCE (JA3 SSLBL)
-# ============================================================================
-Write-Host "`n[*] Fetching Latest JA3 Threat Intel (Abuse.ch)..." -ForegroundColor Gray
-$Ja3Url = "https://sslbl.abuse.ch/blacklist/ja3_fingerprints.json"
-$Ja3Out = Join-Path $StagingDir "ja3_fingerprints.json"
+Write-Host "`n[*] Downloading TraceEvent NuGet Package..." -ForegroundColor Gray
+$TeUrl = "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/3.0.2"
+$ZipPath = Join-Path $StagingDir "TraceEvent.zip"
 try {
-    Invoke-WebRequest -Uri $Ja3Url -OutFile $Ja3Out
-    Register-FileHash -FilePath $Ja3Out -LogicalName "JA3_ThreatIntel"
+    Invoke-WebRequest -Uri $TeUrl -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
+    Register-FileHash $ZipPath "TraceEvent_Package"
 } catch {
-    Write-Host "    [!] Could not reach Abuse.ch. Deploying with offline cache only." -ForegroundColor Yellow
+    Write-Host "[!] Failed to download TraceEvent library." -ForegroundColor Red
 }
 
 # ============================================================================
-# 3. CORE SENSOR PAYLOADS
+# 2. THREAT INTEL: FULL SURICATA RULESETS
 # ============================================================================
-Write-Host "`n[*] Copying Core Sensor Payloads from Local Workspace..." -ForegroundColor Gray
-$Payloads = @("C2Sensor_Launcher.ps1", "C2Sensor.cs", "c2sensor_ml.dll")
+Write-Host "`n[*] Downloading Full Suricata Ruleset Suite..." -ForegroundColor Gray
+$SuricataDir = New-Item -Path (Join-Path $StagingDir "suricata") -ItemType Directory -Force
 
-foreach ($p in $Payloads) {
-    if (Test-Path $p) {
-        Copy-Item -Path $p -Destination $StagingDir -Force
-        Write-Host "    [+] Staged: $p" -ForegroundColor Green
-    } else {
-        Write-Host "    [!] WARNING: $p not found in current directory." -ForegroundColor Yellow
-        if ($p -match "\.dll$") {
-            Write-Host "        -> Run Build-RustEngine.ps1 before building the Air-Gap package." -ForegroundColor Red
-        }
+$SuricataUrls = @(
+    @{ Name = "ET_DNS"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-dns.rules" },
+    @{ Name = "ET_C2"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-c2.rules" },
+    @{ Name = "ET_Malware"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-malware.rules" },
+    @{ Name = "ThreatView_CS_C2"; Url = "https://rules.emergingthreats.net/open/suricata-8.0.4/rules/threatview_CS_c2.rules" },
+    @{ Name = "ET_BotCC"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-botcc.rules" },
+    @{ Name = "ET_Compromised"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-compromised.rules" },
+    @{ Name = "ET_Policy"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-policy.rules" },
+    @{ Name = "ET_Info"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-info.rules" }
+)
+
+foreach ($feed in $SuricataUrls) {
+    $dest = Join-Path $SuricataDir "$($feed.Name).rules"
+    try {
+        Invoke-WebRequest -Uri $feed.Url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+        Register-FileHash $dest "Suricata_$($feed.Name)"
+        Write-Host "    [+] Gathered: $($feed.Name)" -ForegroundColor Green
+    } catch {
+        Write-Host "    [!] Failed to download feed: $($feed.Name)" -ForegroundColor Yellow
     }
 }
 
 # ============================================================================
-# 4. COMPRESSION & CLEANUP
+# 3. THREAT INTEL: SIGMAHQ
 # ============================================================================
-Write-Host "`n[*] Generating Transit Manifest..." -ForegroundColor Gray
+Write-Host "`n[*] Bundling SigmaHQ Network Rules..." -ForegroundColor Gray
+$SigmaUrl = "https://github.com/SigmaHQ/sigma/archive/refs/heads/master.zip"
+$SigmaZip = Join-Path $StagingDir "sigma_rules.zip"
+try {
+    Invoke-WebRequest -Uri $SigmaUrl -OutFile $SigmaZip -UseBasicParsing -ErrorAction Stop
+    Register-FileHash $SigmaZip "Sigma_Rules_Package"
+} catch {
+    Write-Host "[!] Failed to download SigmaHQ rules." -ForegroundColor Red
+}
+
+# ============================================================================
+# 4. CORE ENGINE PAYLOADS
+# ============================================================================
+Write-Host "`n[*] Copying Core Sensor Payloads..." -ForegroundColor Gray
+$Payloads = @("C2Sensor_Launcher.ps1", "C2Sensor.cs", "c2sensor_ml.dll")
+
+foreach ($p in $Payloads) {
+    if (Test-Path $p) {
+        $destPath = Join-Path $StagingDir $p
+        Copy-Item -Path $p -Destination $destPath -Force
+        Register-FileHash $destPath "Payload_$p"
+        Write-Host "    [+] Staged: $p" -ForegroundColor Green
+    } else {
+        Write-Host "    [!] WARNING: $p not found in current directory." -ForegroundColor Yellow
+    }
+}
+
+# ============================================================================
+# 5. PACKAGING & FINAL VERIFICATION
+# ============================================================================
+Write-Host "`n[*] Generating Integrity Manifest..." -ForegroundColor Cyan
 $ManifestPath = Join-Path $StagingDir "AirGap_Manifest.json"
 $TransitManifest | ConvertTo-Json | Out-File -FilePath $ManifestPath -Encoding UTF8
 
-Write-Host "[*] Compressing Air-Gap Package to $OutFile..." -ForegroundColor Cyan
+Write-Host "[*] Compressing Package..." -ForegroundColor Cyan
 if (Test-Path $OutFile) { Remove-Item $OutFile -Force }
 Compress-Archive -Path "$StagingDir\*" -DestinationPath $OutFile -Force
 
 $FinalZipHash = (Get-FileHash -Path $OutFile -Algorithm SHA256).Hash
 
 Write-Host "`n[+] Build Complete. Portable Deployment Archive: $OutFile" -ForegroundColor Green
-Write-Host "[+] PACKAGE SHA256: $FinalZipHash" -ForegroundColor Yellow
+Write-Host "[+] FINAL PACKAGE HASH (SHA256): $FinalZipHash" -ForegroundColor White -BackgroundColor DarkGreen

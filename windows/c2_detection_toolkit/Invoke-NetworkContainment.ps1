@@ -19,7 +19,7 @@ function Invoke-NetworkContainment {
     Write-Host "[*] Initializing Network Containment Protocol..." -ForegroundColor Cyan
 
     # =====================================================================
-    # 1. DEFINE STRICT SAFETY WHITELIST 
+    # 1. DEFINE STRICT SAFETY WHITELIST
     # =====================================================================
     # Ensure core routing and trusted DNS resolution is never suspended
     $SafeList = @(
@@ -29,7 +29,7 @@ function Invoke-NetworkContainment {
         "255.255.255.255"           # Broadcast
     )
     # Regex to protect internal LAN routing (10.x, 172.16.x, 192.168.x)
-    $SafeRegex = "^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\." 
+    $SafeRegex = "^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\."
 
     # =====================================================================
     # 2. PARSE TELEMETRY FOR FAST-FLUX NODES
@@ -38,7 +38,7 @@ function Invoke-NetworkContainment {
 
     if (Test-Path $MonitorLog) {
         $LogData = Get-Content -Path $MonitorLog
-        
+
         foreach ($Line in $LogData) {
             foreach ($Proc in $TargetProcesses) {
                 # Match the compromised processes and extract the exact Destination IP
@@ -65,7 +65,7 @@ function Invoke-NetworkContainment {
         }
 
         $RuleName = "C2Sensor_Containment_$TargetIp"
-        
+
         if (-not $ApplyRules) {
             Write-Host "[SIMULATION] Would isolate outbound traffic to node: $TargetIp" -ForegroundColor DarkGray
         } else {

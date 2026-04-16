@@ -451,7 +451,7 @@ function Initialize-NetworkThreatIntel {
                             $cleanVal = $val
                             # Boundary Protection: Pad domains with a leading dot
                             if ($isDomain -and -not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
-                            
+
                             $TiKeys.Add($cleanVal); $TiTitles.Add("Suricata: $msg"); $suricataCount++
                         }
                     }
@@ -527,7 +527,7 @@ function Initialize-NetworkThreatIntel {
 
                     # 4. Strict Sanitization & Mathematical Gatekeeper
                     foreach ($rawItem in $rawItems) {
-                        
+
                         $strItem = [string]$rawItem
                         if ([string]::IsNullOrWhiteSpace($strItem)) { continue }
 
@@ -540,7 +540,7 @@ function Initialize-NetworkThreatIntel {
                         $cleanVal = $cleanVal -replace '^\.\*|\.\*$', ''    # Strip Regex Wildcards (.*)
                         $cleanVal = $cleanVal -replace '[\^\$\\]', ''       # Strip Regex Anchors (^, $) and stray slashes
                         $cleanVal = $cleanVal -replace '^\*|\*$', ''        # Strip Glob Wildcards (*)
-                        
+
                         $cleanVal = $cleanVal.ToLower().Trim()
 
                         if ([string]::IsNullOrWhiteSpace($cleanVal)) { continue }
@@ -554,7 +554,7 @@ function Initialize-NetworkThreatIntel {
                             if ($isDomain -and -not $cleanVal.StartsWith(".")) { 
                                 $cleanVal = ".$cleanVal" 
                             }
-                            
+
                             $TiKeys.Add($cleanVal)
                             $TiTitles.Add("Sigma: $title")
                             $sigmaCount++
@@ -591,7 +591,7 @@ function Invoke-RollingForensicSweep {
 
     $AllLines = @(Get-Content $LogPath -ErrorAction SilentlyContinue)
     if ($null -eq $AllLines -or $AllLines.Count -eq 0) { return }
-    
+
     $TotalLines = $AllLines.Count
 
     if ($TotalLines -lt $LastLine) {
@@ -643,7 +643,7 @@ function Invoke-RollingForensicSweep {
     # SWEEP & COMPILE
     $ConsolidatedData = @()
     foreach ($alert in $UniqueAlerts) {
-        
+
         $rawProc = $alert.ProcessName
         if ($rawProc -is [array]) { $rawProc = $rawProc[0] }
         $procName = [string]$rawProc
@@ -705,7 +705,7 @@ if (-not (Test-Path $ManagedDllPath)) {
     New-Item -Path $ExtractPath -ItemType Directory -Force | Out-Null
     $ZipPath = Join-Path $StagingDir "TraceEvent.zip"
     try {
-        Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/2.0.61" -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/3.0.2" -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
         Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force -ErrorAction Stop
         Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
     } catch {
@@ -1441,7 +1441,7 @@ try {
             Invoke-RollingForensicSweep
             $Script:LastSweepTime = Get-Date
         }
-     
+
         # --- LOG ROTATION & GROOMING ENGINE ---
         if ($dataBatch.Count -gt 0) {
             if (Test-Path $OutputPath) {
@@ -1476,7 +1476,7 @@ try {
                 Remove-Item -Path $stale.FullName -Force -ErrorAction SilentlyContinue
                 Write-Diag "Disk Protection: Groomed stale log file -> $($stale.Name)" "INFO"
             }
-            
+
             # 2. Prevent UEBA Out-Of-Memory (OOM) Leaks
             if ($global:UebaLearningCache.Count -gt 50000) {
                 $global:UebaLearningCache.Clear()
