@@ -123,6 +123,8 @@ if ($TestMode) {
     $IpPrefixExclusions = $IpPrefixExclusions | Where-Object { $_ -notin $CdnPrefixes }
 }
 
+$Script:LastSweepTime = Get-Date
+
 # Alert Metadata
 $activeRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
 if ($activeRoute) {
@@ -403,11 +405,11 @@ function Initialize-NetworkThreatIntel {
             @{ Name = "ET_C2";  Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-c2.rules" },
             @{ Name = "ET_Malware"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-malware.rules" },
             @{ Name = "ThreatView_CS_C2"; Url = "https://rules.emergingthreats.net/open/suricata-8.0.4/rules/threatview_CS_c2.rules" },
-            
+
             # Active Botnet Nodes & Compromised Drop Zones
             @{ Name = "ET_BotCC"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-botcc.rules" },
             @{ Name = "ET_Compromised"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-compromised.rules" },
-            
+
             # LOLBins, Reverse Tunnels (Ngrok), and Cloud Exfiltration (Mega/Pastebin)
             @{ Name = "ET_Policy"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-policy.rules" },
             @{ Name = "ET_Info"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-info.rules" }
@@ -431,19 +433,26 @@ function Initialize-NetworkThreatIntel {
             foreach ($line in $rules) {
                 if ($line -match '^alert' -and $line -match 'msg:\s*"([^"]+)"') {
                     $msg = $matches[1]
+                    # SURICATA STRICT PARSING
                     $contents = [regex]::Matches($line, 'content:\s*"([^"]+)"')
                     foreach ($c in $contents) {
                         $val = $c.Groups[1].Value.ToLower()
                         $val = ($val -replace '\|[0-9a-fA-F]{2}\|', '.') -replace '^\.+|\.+$', ''
 
-                        # === NOISE FILTER: IGNORE COMMON PUBLIC DNS/CDNs IN CONTENT FIELDS ===
+                        # IGNORE NOISY IPs
                         $NoisyIps = @("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9")
                         if ($val -in $NoisyIps) { continue }
 
-                        if ($val.Length -gt 4 -and $val -notmatch '^[0-9]+$') {
-                            $TiKeys.Add($val)
-                            $TiTitles.Add("Suricata: $msg")
-                            $suricataCount++
+                        # STRICT VALIDATION: Only allow valid IPv4 or FQDNs. Drops User-Agents, Ports, and HTTP Paths.
+                        $isIp = $val -match "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+                        $isDomain = $val -match "^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$"
+
+                        if ($isIp -or $isDomain) {
+                            $cleanVal = $val
+                            # Boundary Protection: Pad domains with a leading dot
+                            if ($isDomain -and -not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
+                            
+                            $TiKeys.Add($cleanVal); $TiTitles.Add("Suricata: $msg"); $suricataCount++
                         }
                     }
                 }
@@ -479,7 +488,7 @@ function Initialize-NetworkThreatIntel {
             if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
-    
+
     $SigmaFiles = Get-ChildItem -Path "$SigmaBaseDir\*" -Include "*.yml", "*.yaml" -Recurse
     $sigmaCount = 0
 
@@ -488,48 +497,65 @@ function Initialize-NetworkThreatIntel {
             $lines = Get-Content $file.FullName
             $title = "Unknown Sigma Rule"
             $inDetection = $false
-            $activeKey = ""
 
             foreach ($line in $lines) {
-                if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
-                
-                # Enter the master detection block
+                if ($line -match "(?i)^title:\s*(.+)") { 
+                    $title = $matches[1].Trim(" '`"")
+                    continue 
+                }
+
                 if ($line -match "(?i)^\s*detection:") { $inDetection = $true; continue }
-                
-                # Exit the detection block if we hit condition or metadata
-                if ($inDetection -and $line -match "(?i)^\s*(condition|falsepositives|level|tags|status|author|date|description):") { 
+                if ($inDetection -and $line -match "(?i)^\s*(condition|falsepositives|level|tags|status|author|date|description|logsource|fields):") { 
                     $inDetection = $false; continue 
                 }
 
                 if ($inDetection) {
-                    $val = $null
+                    $rawItems = @()
 
-                    # Match Key: Value (Accounts for optional YAML array dash before the key)
-                    if ($line -match "(?i)^\s*(?:-\s*)?[a-zA-Z0-9_\-\.]*(query|hostname|domain|ip|name|destination)[a-zA-Z0-9_\-\.]*(?:\|[a-zA-Z0-9_]+)*:\s*(.*)") {
-                        $activeKey = $matches[0]
-                        $valStr = $matches[2].Trim(" '`"[]")
-                        if ($valStr -and $valStr -notmatch "^$") { $val = $valStr }
+                    # Match Inline YAML Arrays: key: ['val1', 'val2']
+                    if ($line -match ":\s*\[(.*)\]") {
+                        $rawItems = $matches[1] -split ','
                     }
-                    # Match array items underneath a valid key
-                    elseif ($activeKey -ne "" -and $line -match "^\s*-\s*(.+)") {
-                        $val = $matches[1].Trim(" '`"[]")
+                    # Match Standard Key-Value: key: 'val'
+                    elseif ($line -match ":\s*(.+)") {
+                        $rawItems = @($matches[1])
                     }
-                    # Hit an irrelevant key, reset the active key state
-                    elseif ($line -match "^\s*(?:-\s*)?[a-zA-Z0-9_\-\.]+\s*:") {
-                        $activeKey = "" 
+                    # Match Multiline Array Items: - 'val'
+                    elseif ($line -match "^\s*-\s*(.+)") {
+                        $rawItems = @($matches[1])
                     }
 
-                    if ($val) {
-                        # Sanitize indicators
-                        $cleanVal = $val -replace '^\*|\*$', '' -replace '^\\|\\$', '' -replace '^''|''$', ''
-                        if (-not [string]::IsNullOrWhiteSpace($cleanVal) -and $cleanVal.Length -gt 4) {
-                            
-                            # C# Aho-Corasick Boundary Protection (Pad domains with leading dot)
-                            if ($activeKey -match "(?i)query|hostname|domain|name" -and -not $cleanVal.StartsWith(".")) {
-                                $cleanVal = ".$cleanVal"
+                    # 4. Strict Sanitization & Mathematical Gatekeeper
+                    foreach ($rawItem in $rawItems) {
+                        
+                        $strItem = [string]$rawItem
+                        if ([string]::IsNullOrWhiteSpace($strItem)) { continue }
+
+                        $cleanVal = $strItem.Trim(" '`"[]")
+
+                        # === THE SIGMA REGEX & URL DECODER ===
+                        $cleanVal = $cleanVal -replace '(?i)^https?://', '' # Strip HTTP/HTTPS protocols
+                        $cleanVal = $cleanVal -replace '/.*$', ''           # Strip URI paths (/payload.bin)
+                        $cleanVal = $cleanVal -replace '\\\.', '.'          # Convert Regex escaped dots (\.) to (.)
+                        $cleanVal = $cleanVal -replace '^\.\*|\.\*$', ''    # Strip Regex Wildcards (.*)
+                        $cleanVal = $cleanVal -replace '[\^\$\\]', ''       # Strip Regex Anchors (^, $) and stray slashes
+                        $cleanVal = $cleanVal -replace '^\*|\*$', ''        # Strip Glob Wildcards (*)
+                        
+                        $cleanVal = $cleanVal.ToLower().Trim()
+
+                        if ([string]::IsNullOrWhiteSpace($cleanVal)) { continue }
+
+                        # STRICT VALIDATION: Is it mathematically an IP or FQDN?
+                        $isIp = $cleanVal -match "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+                        $isDomain = $cleanVal -match "^\.?([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$"
+
+                        if ($isIp -or $isDomain) {
+                            # Boundary Protection: Pad domains with a leading dot for Aho-Corasick
+                            if ($isDomain -and -not $cleanVal.StartsWith(".")) { 
+                                $cleanVal = ".$cleanVal" 
                             }
                             
-                            $TiKeys.Add($cleanVal.ToLower())
+                            $TiKeys.Add($cleanVal)
                             $TiTitles.Add("Sigma: $title")
                             $sigmaCount++
                         }
@@ -544,6 +570,121 @@ function Initialize-NetworkThreatIntel {
     Write-Diag "Threat Intel Compilation Complete. Passing $($TiKeys.Count) signatures to Memory." "STARTUP"
     $TiKeys | Out-File "$LogDir\Compiled_ThreatIntel.txt"
     return @{ Keys = $TiKeys.ToArray(); Titles = $TiTitles.ToArray() }
+}
+
+function Invoke-RollingForensicSweep {
+    $LogPath   = "C:\ProgramData\C2Sensor\Logs\C2Sensor_Alerts.jsonl"
+    $OutFile   = "C:\ProgramData\C2Sensor\Logs\C2Sensor_StaticAlert_Context.csv"
+    $StateFile = "C:\ProgramData\C2Sensor\Logs\orchestrator_sweep.state"
+
+    if (-not (Test-Path $LogPath)) { return }
+
+    # STATEFUL CONTINUITY & LOG ROTATION (HARDENED)
+    $LastLine = 0
+    if (Test-Path $StateFile) {
+        try { 
+            $LastLine = [int](Get-Content $StateFile -ErrorAction Stop | Select-Object -First 1) 
+        } catch { 
+            $LastLine = 0 
+        }
+    }
+
+    $AllLines = @(Get-Content $LogPath -ErrorAction SilentlyContinue)
+    if ($null -eq $AllLines -or $AllLines.Count -eq 0) { return }
+    
+    $TotalLines = $AllLines.Count
+
+    if ($TotalLines -lt $LastLine) {
+        $LastLine = 0
+    }
+
+    # Exit early if no new lines to prevent burning CPU
+    if ($TotalLines -eq $LastLine) { return }
+
+    $NewLines = $AllLines | Select-Object -Skip $LastLine
+
+    # PARSE NEW EVENTS
+    $StaticEvents = @()
+    foreach ($line in $NewLines) {
+        $event = try { $line | ConvertFrom-Json } catch { $null }
+        if ($null -ne $event -and $event.EventType -in @("ThreatIntel_Match", "Static_Detection")) {
+            $StaticEvents += $event
+        }
+    }
+
+    # ALWAYS update the state file immediately so we don't re-parse empty/ML events later
+    try {
+        $TotalLines | Out-File -FilePath $StateFile -Force -ErrorAction Stop
+    } catch {
+        Write-Diag "State file locked by external process. Recovery scheduled for next sweep." "WARN"
+    }
+
+    if ($StaticEvents.Count -eq 0) { return }
+
+    $UniqueAlerts = $StaticEvents | Group-Object Image, SuspiciousFlags | Select-Object Name,
+        @{Name='ProcessName'; Expression={$_.Group[0].Image}},
+        @{Name='EventType'; Expression={$_.Group[0].EventType}},
+        @{Name='Signature'; Expression={$_.Group[0].SuspiciousFlags}},
+        @{Name='HitCount'; Expression={$_.Group.Count}},
+        @{Name='LastSeen'; Expression={$_.Group[-1].Timestamp_Local}}
+
+    # WMI PRE-CACHING (JSON HARDENED)
+    $RequiredNames = $UniqueAlerts.ProcessName | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch "(?i)^terminated$" } | Select-Object -Unique
+    $WmiCache = @{}
+    foreach ($name in $RequiredNames) {
+        $rawName = if ($name -is [array]) { $name[0] } else { $name }
+        $cleanName = ([string]$rawName -replace '\.exe$', '').Trim()
+
+        if ([string]::IsNullOrWhiteSpace($cleanName)) { continue }
+
+        $WmiCache[[string]$name] = Get-CimInstance Win32_Process -Filter "Name = '$cleanName.exe' OR Name = '$cleanName'" -ErrorAction SilentlyContinue
+    }
+
+    # SWEEP & COMPILE
+    $ConsolidatedData = @()
+    foreach ($alert in $UniqueAlerts) {
+        
+        $rawProc = $alert.ProcessName
+        if ($rawProc -is [array]) { $rawProc = $rawProc[0] }
+        $procName = [string]$rawProc
+
+        if ([string]::IsNullOrWhiteSpace($procName) -or $procName -match "(?i)^terminated$") { continue }
+
+        $cleanProcName = ($procName -replace '\.exe$', '').Trim()
+        if ([string]::IsNullOrWhiteSpace($cleanProcName)) { continue }
+
+        $activeInstances = Get-Process -Name $cleanProcName -ErrorAction SilentlyContinue
+
+        if ($null -ne $activeInstances -and $activeInstances.Count -gt 0) {
+            foreach ($proc in $activeInstances) {
+                $matchedWmi = $null
+                if ($WmiCache[$procName]) {
+                    $matchedWmi = $WmiCache[$procName] | Where-Object { $_.ProcessId -eq $proc.Id }
+                }
+
+                $ConsolidatedData += [PSCustomObject]@{
+                    Timestamp       = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                    Alert_Type      = $alert.EventType
+                    Triggered_Rule  = $alert.Signature
+                    Log_ProcessName = $procName
+                    Live_PID        = $proc.Id
+                    CommandLine     = if ($matchedWmi -and $matchedWmi.CommandLine) { $matchedWmi.CommandLine } else { "ACCESS_DENIED" }
+                    ParentPID       = if ($matchedWmi -and $matchedWmi.ParentProcessId) { $matchedWmi.ParentProcessId } else { "UNKNOWN" }
+                    Total_Hits      = $alert.HitCount
+                }
+            }
+        }
+    }
+
+    # APPEND TO CSV
+    if ($ConsolidatedData.Count -gt 0) {
+        try {
+            $ConsolidatedData | Export-Csv -Path $OutFile -NoTypeInformation -Append -Force -ErrorAction Stop
+            Write-Diag "Rolling forensic sweep complete. Appended $($ConsolidatedData.Count) contextual records." "INFO"
+        } catch {
+            Write-Diag "Forensic CSV is locked (possibly by SIEM/Excel). Contextual data dropped for this cycle to prevent crash." "WARN"
+        }
+    }
 }
 
 # ====================== 1. TRACEEVENT LIBRARY FETCH ======================
@@ -563,9 +704,15 @@ if (-not (Test-Path $ManagedDllPath)) {
     Write-Diag "Downloading Microsoft.Diagnostics.Tracing.TraceEvent..." "STARTUP"
     New-Item -Path $ExtractPath -ItemType Directory -Force | Out-Null
     $ZipPath = Join-Path $StagingDir "TraceEvent.zip"
-    Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/2.0.61" -OutFile $ZipPath
-    Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force
-    Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
+    try {
+        Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/2.0.61" -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force -ErrorAction Stop
+        Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Diag "FATAL: TraceEvent download failed. Ensure internet access or place DLL manually." "CRITICAL"
+        Write-Host "[!] Startup Failed: Unable to fetch TraceEvent library. Are you offline?" -ForegroundColor Red
+        exit
+    }
 }
 
 Get-ChildItem -Path $ExtractPath -Recurse | Unblock-File
@@ -1289,18 +1436,22 @@ try {
             $lastMLRunTime = $now
         }
 
+        # --- 15-Minute Rolling Context Sweep ---
+        if ((Get-Date) - $Script:LastSweepTime -gt (New-TimeSpan -Minutes 15)) {
+            Invoke-RollingForensicSweep
+            $Script:LastSweepTime = Get-Date
+        }
+     
         # --- LOG ROTATION & GROOMING ENGINE ---
         if ($dataBatch.Count -gt 0) {
             if (Test-Path $OutputPath) {
                 if ((Get-Item $OutputPath).Length -gt 50MB) {
                     $archiveName = $OutputPath.Replace(".jsonl", "_$($now.ToString('yyyyMMdd_HHmm')).jsonl")
-                    Rename-Item -Path $OutputPath -NewName $archiveName -Force
-                    Write-Diag "Alert log rotated. Archived to $archiveName" "INFO"
+                    try { Rename-Item -Path $OutputPath -NewName $archiveName -Force -ErrorAction Stop; Write-Diag "Alert log rotated." "INFO" } catch { }
                 }
             }
-
             $batchOutput = ($dataBatch | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`r`n"
-            [System.IO.File]::AppendAllText($OutputPath, $batchOutput + "`r`n")
+            try { [System.IO.File]::AppendAllText($OutputPath, $batchOutput + "`r`n") } catch { }
             $dataBatch.Clear()
         }
 
@@ -1308,24 +1459,28 @@ try {
             if (Test-Path $UebaLogPath) {
                 if ((Get-Item $UebaLogPath).Length -gt 50MB) {
                     $archiveName = $UebaLogPath.Replace(".jsonl", "_$($now.ToString('yyyyMMdd_HHmm')).jsonl")
-                    Rename-Item -Path $UebaLogPath -NewName $archiveName -Force
-                    Write-Diag "UEBA log rotated. Archived to $archiveName" "INFO"
+                    try { Rename-Item -Path $UebaLogPath -NewName $archiveName -Force -ErrorAction Stop; Write-Diag "UEBA log rotated." "INFO" } catch { }
                 }
             }
             $uebaOutput = $uebaBatch -join "`r`n"
-            [System.IO.File]::AppendAllText($UebaLogPath, $uebaOutput + "`r`n")
+            try { [System.IO.File]::AppendAllText($UebaLogPath, $uebaOutput + "`r`n") } catch { }
             $uebaBatch.Clear()
         }
 
-        # === DISK PROTECTION: LOG GROOMING (GARBAGE COLLECTION) ===
-        # To save CPU, only evaluate log retention once an hour (at the top of the hour)
+        # === DISK & MEMORY PROTECTION: GARBAGE COLLECTION ===
         if ($now.Minute -eq 0 -and $now.Second -lt 15) {
-            $RetentionDays = 3 # Keep 3 days of heavy UEBA telemetry
+            # 1. Prune Stale Logs
+            $RetentionDays = 3
             $staleLogs = Get-ChildItem -Path $LogDir -Filter "*.jsonl" | Where-Object { $_.LastWriteTime -lt $now.AddDays(-$RetentionDays) }
-            
             foreach ($stale in $staleLogs) {
                 Remove-Item -Path $stale.FullName -Force -ErrorAction SilentlyContinue
                 Write-Diag "Disk Protection: Groomed stale log file -> $($stale.Name)" "INFO"
+            }
+            
+            # 2. Prevent UEBA Out-Of-Memory (OOM) Leaks
+            if ($global:UebaLearningCache.Count -gt 50000) {
+                $global:UebaLearningCache.Clear()
+                Write-Diag "Memory Protection: UEBA Cache exceeded 50,000 keys. Flushed to prevent OOM." "INFO"
             }
         }
 

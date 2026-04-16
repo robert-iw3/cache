@@ -109,10 +109,10 @@ public class RealTimeC2Sensor {
         // Compile Network Threat Intel Arrays (only once or when signatures change)
         if (tiKeys != null && tiKeys.Length > 0) {
             // Simple change-detection so we don't rebuild on every restart
-            bool needsRebuild = NetworkTiTitles.Length != tiTitles.Length;
+            bool needsRebuild = NetworkTiKeys.Length != tiKeys.Length;
             if (!needsRebuild) {
-                for (int i = 0; i < NetworkTiTitles.Length; i++) {
-                    if (!string.Equals(NetworkTiTitles[i], tiTitles[i], StringComparison.Ordinal)) {
+                for (int i = 0; i < NetworkTiKeys.Length; i++) {
+                    if (!string.Equals(NetworkTiKeys[i], tiKeys[i], StringComparison.Ordinal)) {
                         needsRebuild = true;
                         break;
                     }
@@ -533,14 +533,14 @@ public class RealTimeC2Sensor {
                                 List<int> matchIndices = NetworkAc.SearchAll(scanTarget);
                                 if (matchIndices.Count > 0) {
                                     List<string> tags = new List<string>();
-                                    
+
                                     foreach (int matchIdx in matchIndices) {
                                         string matchedKey = NetworkTiKeys[matchIdx];
-                                        
+
                                         if (isNetworkEvent && scanTarget.Length != matchedKey.Length) {
-                                            continue; 
+                                            continue;
                                         }
-                                        
+
                                         if (!tags.Contains(NetworkTiTitles[matchIdx])) {
                                             tags.Add(NetworkTiTitles[matchIdx]);
                                         }
