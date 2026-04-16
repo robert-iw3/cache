@@ -116,7 +116,8 @@ Write-Host "`n$cDark[*] Evidence Repository allocated: $EvidenceFolder$cReset"
 Invoke-DFIRMinion (Join-Path $ScriptDir "cti_check\Invoke-ThreatIntelCheck.ps1") @{} 1 "CTI Enrichment"
 
 # Locate the most recently generated CTI report in the minion's directory.
-$LatestCti = Get-ChildItem -Path (Join-Path $ScriptDir "cti_check") -Filter "threat_intel_report_*.txt" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$DataVault = "C:\ProgramData\C2Sensor\Data"
+$LatestCti = Get-ChildItem -Path $DataVault -Filter "threat_intel_report_*.txt" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 # If a report was found, define its new path in the centralized Evidence Folder.
 $FinalCtiReport = if ($LatestCti) { Join-Path $EvidenceFolder $LatestCti.Name } else { $null }
@@ -205,7 +206,7 @@ if (Test-Path $MemReportPath) {
         $eradArgs['ArmedMode'] = $true
     }
 
-    # Execute the final kill-chain to dump memory, destroy drivers, and reboot.
+    # Execute the final remediation sequence to dump memory, neutralize drivers, and reboot.
     Invoke-DFIRMinion (Join-Path $ScriptDir "Invoke-AutomatedEradication.ps1") $eradArgs 5 "Automated Eradication & ProcDump"
 } else {
     # If no memory report was found, gracefully skip the eradication phase.

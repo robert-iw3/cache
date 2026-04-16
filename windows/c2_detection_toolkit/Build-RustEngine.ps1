@@ -88,6 +88,7 @@ serde_json = "1.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
 linfa = "0.7"
 linfa-clustering = "0.7"
+linfa-nn = "0.7"
 ndarray = "0.15"
 rand = "0.8"
 regex = "1.10"

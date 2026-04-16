@@ -251,7 +251,7 @@ foreach ($Threat in $ThreatList) {
                         if ($TaskAction -match '(C:\\[^\s"]+)') {
                             $DropperFile = $matches[1]
                             Remove-Item -Path $DropperFile -Force -ErrorAction SilentlyContinue
-                            Write-Output "    $cGreen[+] DROPPER WIPED:$cReset Staging dropper deleted: $DropperFile"
+                            Write-Output "    $cGreen[+] DROPPER REMOVED:$cReset Staging dropper deleted: $DropperFile"
                             "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] Dropper wiped: $DropperFile" | Out-File -FilePath $LogFile -Append
                         }
                     } else {
@@ -288,7 +288,7 @@ if ($AutoReboot) {
     Restart-Computer -Force
 } else {
     Write-Output " $cCyan[*] ACTION REQUIRED:$cReset A reboot is required to flush protected payloads from RAM."
-    Write-Output " Run 'Restart-Computer -Force' to finalize the kill-chain."
+    Write-Output " Run 'Restart-Computer -Force' to finalize the remediation sequence."
 }
 
 if (-not $Orchestrated) { [Console]::CursorVisible = $true }

@@ -22,6 +22,18 @@ param (
 $ScriptDir = Split-Path $PSCommandPath -Parent
 if (-not [System.IO.Path]::IsPathRooted($CtiReportPath)) { $CtiReportPath = Join-Path $ScriptDir $CtiReportPath }
 
+# Dynamically resolve the latest timestamped report if the default is missing
+if (-not (Test-Path $CtiReportPath)) {
+    $DataDir = "C:\ProgramData\C2Sensor\Data"
+    $LatestFile = Get-ChildItem -Path $DataDir -Filter "threat_intel_report_*.txt" |
+                  Sort-Object Name -Descending |
+                  Select-Object -First 1
+    if ($LatestFile) {
+        $CtiReportPath = $LatestFile.FullName
+        if (-not $Orchestrated) { Write-Host "  [i] Target Found: $($LatestFile.Name)" -ForegroundColor DarkGray }
+    }
+}
+
 # =================================================================
 # DUAL-MODE UI ENGINE
 # =================================================================

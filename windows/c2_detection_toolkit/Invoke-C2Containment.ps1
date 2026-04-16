@@ -117,7 +117,7 @@ foreach ($line in $Lines) {
             Write-Output "  $cRed[!] THREAT ISOLATED:$cReset $TargetProcess (PID: $TargetPID, TID: $($TargetTID -replace '^$','Unknown')) -> $TargetIP"
 
             if ($ProtectedPIDs -contains $TargetPID -and -not $TargetTID) {
-                Write-Output "    $cYellow[-] ABORTED KILL:$cReset PID $TargetPID is protected."
+                Write-Output "    $cYellow[-] ABORTED TERMINATION:$cReset PID $TargetPID is protected."
             } else {
                 try {
                     if ($TargetTID) {

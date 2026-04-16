@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Executes on an internet-connected staging system to gather all required dependencies,
-    TraceEvent packages, and the pre-compiled Rust ML binary. Compresses them into a 
+    TraceEvent packages, and the pre-compiled Rust ML binary. Compresses them into a
     portable ZIP archive for secure, offline deployment.
 
 @RW
