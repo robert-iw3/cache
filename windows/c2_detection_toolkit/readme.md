@@ -1,7 +1,7 @@
 # Windows Kernel C2 Beacon Sensor v1.0
 
 ## Overview
-A **kernel-native, high-performance** Command and Control (C2) detection and automated response engine for Windows. This project bridges the gap between raw Windows kernel telemetry (ETW), Cryptographic Deep Packet Inspection, wire-speed Threat Intelligence (Sigma/Suricata), and native Machine Learning to catch modern, evasive C2 frameworks (Sliver, Cobalt Strike, Nighthawk).  A lightweight, drop-in sensor designed to detect stealthy C2 beacons through advanced mathematical ML analysis and UEBA-driven baselining of normal outbound traffic behavior.
+A **kernel-native, high-performance** Command and Control (C2) detection and automated response engine for Windows. This project bridges the gap between raw Windows kernel telemetry (ETW), Cryptographic Deep Packet Inspection, wire-speed Threat Intelligence (Suricata/Abuse.ch), and native Machine Learning to catch modern, evasive C2 frameworks (Sliver, Cobalt Strike, Nighthawk).  A lightweight, drop-in sensor designed to detect stealthy C2 beacons through advanced mathematical ML analysis and UEBA-driven baselining of normal outbound traffic behavior.
 
 By default, the suite operates in an **Audit Mode (Dry-Run)** to prevent accidental termination of legitimate business applications while mapping your environment's network profile.
 
@@ -9,7 +9,7 @@ By default, the suite operates in an **Audit Mode (Dry-Run)** to prevent acciden
 
 ## V1 Architectural Highlights
 * **Native Rust FFI Machine Learning:** Replaced the legacy Python daemon with `c2sensor_ml.dll`. The C# ETW listener pushes multi-dimensional telemetry matrices (Intervals, Packet Sizes, Subnet Diversity) directly into Rust's RAM for mathematically rigorous, lock-free DBSCAN and K-Means clustering.
-* **O(1) Network Threat Intel:** Dynamically syncs and compiles EmergingThreats (Suricata) and SigmaHQ network rules into an Aho-Corasick state machine. Evaluates live DNS and TCP/IP flows against thousands of signatures simultaneously with zero CPU overhead.
+* **O(1) Network Threat Intel:** Dynamically syncs and compiles EmergingThreats (Suricata) and Abuse.ch network rules into an Aho-Corasick state machine. Evaluates live DNS and TCP/IP flows against thousands of signatures simultaneously with zero CPU overhead.
 * **Universal AppGuard:** Monitors `Kernel-Process` events to instantly intercept web shells and database RCEs (IIS, SQL, Tomcat, Node) attempting to spawn command interpreters in unauthorized directories.
 * **Cryptographic DPI & JA3 Profiling:** Natively subscribes to the `NDIS-PacketCapture` provider to inspect raw Layer 2 Ethernet frames. Dynamically extracts TLS `Client Hello` signatures to generate JA3 hashes and block malicious L4 frameworks instantly.
 * **Enterprise State Management:** Legacy JSON flat-files have been replaced by a high-speed SQLite Write-Ahead Logging (WAL) database (`C2Sensor_State.db`), securely anchoring temporal "low and slow" beacon tracking across system reboots.
@@ -37,7 +37,7 @@ graph TD
     subgraph Phase1 [1. Deployment & Threat Intel]
         direction TB
         BUILD["Build-RustEngine.ps1<br/>(Cargo Compiler)"]:::script
-        ABUSE["Abuse.ch SSLBL / SigmaHQ / Suricata<br/>(External CTI Feeds)"]:::ext
+        ABUSE["Abuse.ch SSLBL / Suricata<br/>(External CTI Feeds)"]:::ext
         ORCH["C2Sensor_Launcher.ps1<br/>(Master Orchestrator)"]:::core
         ETW["Windows ETW<br/>(TCPIP & NDIS Layer 2)"]:::ext
     end
@@ -131,7 +131,7 @@ Before launching the sensor, compile the Rust machine learning engine into a nat
 ```
 
 ### 2. Launch the Sensor (Audit Mode)
-Run the orchestrator. It will bootstrap the environment, sync Suricata/Sigma network rules, build the Aho-Corasick arrays, map the Rust ML engine into memory, and begin monitoring in **Dry-Run Mode**.
+Run the orchestrator. It will bootstrap the environment, sync Suricata/Abuse.ch network rules, build the Aho-Corasick arrays, map the Rust ML engine into memory, and begin monitoring in **Dry-Run Mode**.
 ```powershell
 .\C2Sensor_Launcher.ps1
 ```
@@ -152,7 +152,7 @@ When a critical ML or JA3 alert fires during an incident, open a new prompt and 
 ---
 
 ## Core File Manifest
-* **`C2Sensor_Launcher.ps1`**: The master orchestration, Threat Intel network compiler (Sigma/Suricata), FFI memory mapper, and primary HUD daemon.
+* **`C2Sensor_Launcher.ps1`**: The master orchestration, Threat Intel network compiler (Abuse.ch/Suricata), FFI memory mapper, and primary HUD daemon.
 * **`C2Sensor.cs`**: The core unmanaged C# ETW listener, NDIS JA3 packet scanner, AppGuard interceptor, and `[DllImport]` boundary.
 * **`lib.rs` / `c2sensor_ml.dll`**: The native Rust Machine Learning engine executing DBSCAN, K-Means clustering, SQLite WAL state management, and DGA heuristics natively in memory.
 * **`Build-RustEngine.ps1` & `Build-AirGapPackage.ps1`**: Automated deployment pipelines for enterprise provisioning.
@@ -177,7 +177,83 @@ The engine operates primarily in unmanaged memory, but rigorously logs alerts, s
 | **`advanced_memory_injections.csv`** | Generated CSV containing addresses of Direct Syscalls, RWX anomalies, and YARA hits. | Feeds the Eradication Engine. |
 | **`*.dmp` & Forensic Reports** | Full process memory dumps and T1-T5 WinDbg analysis files. | Deep-dive reverse engineering handoff. |
 
+---
+
 **Developer Note (@RW):**
 Transitioning the ML clustering engine from a Python daemon to a native Rust FFI library was a definitive architectural pivot. By eliminating the STDIN/STDOUT IPC pipes and compiling the K-Means/DBSCAN math into a C-compatible DLL, we collapsed the architecture into a single, unmanaged memory space. The C# ETW listener now passes memory pointers directly to Rust for zero-latency telemetry evaluation. Combined with the new O(1) Aho-Corasick Threat Intel compiler and SQLite WAL state tracking, V1 operates at true wire-speed.
 
-Under sustained high-load testing (5 consecutive back-to-back runs with continuous ETW ingestion, NDIS JA3 extraction, Aho-Corasick threat-intel matching, and native FFI ML batching), the C2Sensor stayed exceptionally lightweight: CPU usage peaked at only 7-15% and RAM consumption never exceeded 500 MB.
+Under sustained high-load testing (5 consecutive back-to-back runs with continuous ETW ingestion, NDIS JA3 extraction, Aho-Corasick threat-intel matching, and native FFI ML batching), the C2Sensor stayed exceptionally lightweight: CPU usage peaked at only 7-15% and RAM consumption never exceeded 700 MB.  Going forward, any new additions to v2 will happen after the transition into a compiled executable (.NET 8 C# Console Application) that will drastically reduce RAM consumption, likely dropping it from 600-800MB down to ~150MB - 250MB (under heavy load).  For now, the "PowerShell Tax" is the culprit for RAM consumption (PSObject memory boxing, dynamic type evaluation, and script AST parsing overhead).  This project has turned from a drop in sensor via pwsh into a network monitoring tool (ML/UEBA/CTI) and as new features are introduced, `pwsh` cannot perform the heavy lifting without increasing resource utilization.  Which defeats the purpose of a "lightweight sensor".
+
+**Current Plan (v2 System Diagram)**
+
+```mermaid
+graph TD
+    subgraph OS["Windows OS Layer"]
+        ETW[Windows Kernel ETW]
+        NDIS[NDIS Packet Capture]
+        FW[Windows Firewall & Process Manager]
+    end
+
+    subgraph CSharp["C# Native Orchestrator (C2Sensor.exe)"]
+        Trace[TraceEvent Memory Listener]
+        PreFilter{Zero-Allocation Pre-Filters}
+        Drop[Dropped Noise]
+        
+        subgraph Analysis["Stateful Analysis Lane"]
+            AC[Aho-Corasick Threat Intel]
+            AppGuard[AppGuard Lineage Tracker]
+            JA3[JA3 Cryptographic DPI]
+            FlowQ[(O-1 Flow Metadata Queues)]
+        end
+
+        Alerts[Alert Dispatcher & UI HUD]
+        Defense[Active Defense Engine]
+    end
+
+    subgraph Rust["Rust Unmanaged Boundary (c2sensor_ml.dll)"]
+        FFI[Native FFI Memory Bridge]
+        ML[K-Means Clustering Math Engine]
+        DB[(SQLite WAL Database)]
+    end
+
+    %% Data Flow - Ingestion
+    ETW -->|Raw Pointers| Trace
+    NDIS -->|Raw Frames| Trace
+    Trace -->|Unboxed Objects| PreFilter
+    
+    %% Filtering
+    PreFilter -->|RFC 1918 / Safe Domains| Drop
+    PreFilter -->|Network Traffic| AC
+    PreFilter -->|Process Creation| AppGuard
+    PreFilter -->|TLS Client Hello| JA3
+
+    %% Direct Heuristics to Alerts
+    AC -->|Suricata Match| Alerts
+    AppGuard -->|Web Shells / RCE| Alerts
+    JA3 -->|Matched Fingerprints| Alerts
+
+    %% Stateful Math Lane
+    AC -->|Standard Traffic Flow| FlowQ
+    FlowQ -->|Batched Context via Memory Pointers| FFI
+    FFI --> ML
+    ML <-->|Historical State| DB
+    ML -->|Confirmed Anomalies| FFI
+    FFI -->|Evaluated Alerts| Alerts
+
+    %% Execution Lane
+    Alerts -->|Confidence > 85%| Defense
+    Defense -->|Terminate Process / Block IP| FW
+
+    %% Styling
+    classDef os fill:#2d3436,stroke:#636e72,stroke-width:2px,color:#dfe6e9;
+    classDef csharp fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#ffffff;
+    classDef rust fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#ffffff;
+    classDef queue fill:#e17055,stroke:#fab1a0,stroke-width:2px,color:#ffffff;
+    classDef filter fill:#00b894,stroke:#55efc4,stroke-width:2px,color:#ffffff;
+
+    class ETW,NDIS,FW os;
+    class Trace,Alerts,Defense csharp;
+    class FFI,ML,DB rust;
+    class FlowQ queue;
+    class PreFilter,Drop,AC,AppGuard,JA3 filter;
+```

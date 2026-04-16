@@ -2,7 +2,7 @@
  * SYSTEM:          C2 Beacon Sensor - Active Defense / Infrastructure Exploitation
  * COMPONENT:       C2Sensor.cs (Unmanaged ETW Engine & FFI Bridge)
  * AUTHOR:          Robert Weber
- * VERSION:         1.0
+ * VERSION:         2.0
  * * DESCRIPTION:
  * A high-performance, real-time Event Tracing for Windows (ETW) listener compiled
  * natively into the PowerShell runspace. Incorporates Native FFI boundaries
@@ -13,7 +13,7 @@
  * - Universal AppGuard: Monitors Kernel-Process events to intercept web shells.
  * - Cryptographic DPI (NDIS): Extracts TLS Client Hello signatures (JA3).
  * - O(1) Network Threat Intel: Implements an Aho-Corasick state machine to parse
- * compiled Suricata and Sigma network signatures against live ETW streams at wire speed.
+ * compiled Suricata network signatures against live ETW streams at wire speed.
  ********************************************************************************/
 
 using System;
@@ -46,8 +46,34 @@ public class RealTimeC2Sensor {
 
     private static IntPtr _mlEnginePtr = IntPtr.Zero;
 
-    // Thread-safe queue utilized as a lock-free data bridge
-    public static ConcurrentQueue<string> EventQueue = new ConcurrentQueue<string>();
+    // --- NATIVE CLR OBJECT BINDING ---
+    public class C2Event {
+        public string Provider { get; set; }
+        public string EventName { get; set; }
+        public string TimeStamp { get; set; }
+        public string DestIp { get; set; }
+        public string Port { get; set; }
+        public string Query { get; set; }
+        public string Image { get; set; }
+        public string CommandLine { get; set; }
+        public string PID { get; set; }
+        public string TID { get; set; }
+        public string Size { get; set; }
+        public string ThreatIntel { get; set; }
+        public string TrafficDirection { get; set; }
+        public string Message { get; set; }
+        public string Details { get; set; }
+        public string Parent { get; set; }
+        public string Child { get; set; }
+        public string Trigger { get; set; }
+        public string JA3 { get; set; }
+        public string SuspiciousFlags { get; set; }
+        public string RawJson { get; set; }
+        public string Error { get; set; }
+    }
+
+    // Thread-safe queue passing strongly-typed objects instead of strings
+    public static ConcurrentQueue<C2Event> EventQueue = new ConcurrentQueue<C2Event>();
     private static TraceEventSession _session;
     private static HashSet<string> DnsExclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -58,6 +84,13 @@ public class RealTimeC2Sensor {
     private static AhoCorasick NetworkAc = new AhoCorasick();
     private static string[] NetworkTiTitles = new string[0];
     private static string[] NetworkTiKeys = new string[0];
+
+    // --- P2P LATERAL MOVEMENT STATE ---
+    private static readonly string[] MaliciousPipes = {
+        "\\msagent_", "\\postex_", "\\status_", // Cobalt Strike defaults
+        "\\mypipe-f", "\\mypipe-h", "\\gilgamesh", // Common malleable profiles
+        "\\mythic_", "\\sliver_", "\\psexec_svc" 
+    };
 
     // AppGuard Web Server Hashsets
     private static HashSet<string> WebDaemons = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -98,12 +131,12 @@ public class RealTimeC2Sensor {
         try {
             _mlEnginePtr = init_engine();
             if (_mlEnginePtr != IntPtr.Zero) {
-                EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[ML ENGINE] Native DLL successfully mapped at memory address: 0x" + _mlEnginePtr.ToString("X") + "\"}");
+                EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[ML ENGINE] Native DLL successfully mapped at memory address: 0x" });
             } else {
-                EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[ML ENGINE ERROR] init_engine returned NULL.\"}");
+                EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[ML ENGINE ERROR] init_engine returned NULL." });
             }
         } catch (Exception ex) {
-            EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[ML ENGINE ERROR] FFI Import Failed: " + ex.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}");
+            EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[ML ENGINE ERROR] FFI Import Failed: " + EscapeJson(ex.Message) });
         }
 
         // Compile Network Threat Intel Arrays (only once or when signatures change)
@@ -123,10 +156,10 @@ public class RealTimeC2Sensor {
                 NetworkAc.Build(tiKeys);
                 NetworkTiTitles = tiTitles;   // store the new list for next comparison
                 NetworkTiKeys = tiKeys;
-                EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[THREAT INTEL] Aho-Corasick State Machine armed with " + tiKeys.Length + " network signatures.\"}");
+                EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[THREAT INTEL] Aho-Corasick State Machine armed with " + tiKeys.Length + " network signatures." });
             }
             else {
-                EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[THREAT INTEL] Re-using existing Aho-Corasick state machine (no rule changes).\"}");
+                EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[THREAT INTEL] Re-using existing Aho-Corasick state machine (no rule changes)." });
             }
         }
 
@@ -136,6 +169,18 @@ public class RealTimeC2Sensor {
         foreach (string s in shellInterpreters) ShellInterpreters.Add(s);
         SuspiciousPaths = suspiciousPaths ?? Array.Empty<string>();
 
+    }
+
+    private static string EscapeJson(string s) {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\n", "\\n")
+            .Replace("\r", "\\r")
+            .Replace("\t", "\\t")
+            .Replace("\b", "\\b")
+            .Replace("\f", "\\f");
     }
 
     public static string EvaluateBatch(string jsonPayload) {
@@ -149,7 +194,7 @@ public class RealTimeC2Sensor {
                 return result;
             }
         } catch (Exception ex) {
-            return "{\"daemon_error\": \"FFI Crash: " + ex.Message.Replace("\"", "\\\"") + "\"}";
+            return "{\"daemon_error\": \"FFI Crash: " + EscapeJson(ex.Message) + "\"}";
         }
         return "{}";
     }
@@ -323,9 +368,7 @@ public class RealTimeC2Sensor {
                             evName == "ImageUnload" ||
                             evName == "SystemCall" ||
                             evName == "Acg" ||
-                            evName == "Create" ||
                             evName == "CreateNewFile" ||
-                            evName == "NameCreate" ||
                             evName.StartsWith("MemInfo") ||
                             evName.StartsWith("File"))
                         {
@@ -356,7 +399,7 @@ public class RealTimeC2Sensor {
                         if (data.ProviderName.Contains("Kernel-Process") && data.EventName.Contains("Start")) {
                             string cmd = (data.PayloadStringByName("CommandLine") ?? "").ToLower();
                             if (cmd.Contains("logman") && (cmd.Contains("stop") || cmd.Contains("delete")) && cmd.Contains("c2realtimesession")) {
-                                EventQueue.Enqueue("{\"Provider\":\"TamperGuard\", \"EventName\":\"ETW_STOP_ATTEMPT\", \"Details\":\"A process attempted to blind the C2 ETW Session via Logman.\"}");
+                                EventQueue.Enqueue(new C2Event { Provider = "TamperGuard", EventName = "ETW_STOP_ATTEMPT", Details = "A process attempted to blind the C2 ETW Session via Logman." });
                             }
                         }
 
@@ -366,8 +409,7 @@ public class RealTimeC2Sensor {
                                 uint protection = Convert.ToUInt32(protectionObj);
                                 if (protection == 0x40) {
                                     string proc = string.IsNullOrEmpty(data.ProcessName) ? data.ProcessID.ToString() : data.ProcessName;
-                                    EventQueue.Enqueue("{\"Provider\":\"TamperGuard\", \"EventName\":\"MEMORY_PATCH_DETECTED\", \"Details\":\"Suspicious RWX permission change detected in process: " + proc + "\"}");
-                                }
+                                        EventQueue.Enqueue(new C2Event { Provider = "TamperGuard", EventName = "MEMORY_PATCH_DETECTED", Details = "Suspicious RWX permission change detected in process: " + proc });                              }
                             }
                         }
 
@@ -417,8 +459,7 @@ public class RealTimeC2Sensor {
                                         string eventType = isWebParent ? "WEB_SHELL_DETECTED" : "DB_RCE_DETECTED";
                                         string trigger = isInterpreter ? "Command Interpreter" : "Unauthorized Directory";
 
-                                        string alertJson = "{\"Provider\":\"AppGuard\", \"EventName\":\"" + eventType + "\", \"ParentContext\":\"" + parentContext.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\", \"Child\":\"" + childClean + "\", \"Trigger\":\"" + trigger + "\", \"CommandLine\":\"" + childCmdLine.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
-                                        EventQueue.Enqueue(alertJson);
+                                        EventQueue.Enqueue(new C2Event { Provider = "AppGuard", EventName = eventType, Parent = parentContext, Child = childClean, Trigger = trigger, CommandLine = childCmdLine });
                                     }
                                 }
                             }
@@ -453,10 +494,8 @@ public class RealTimeC2Sensor {
                                 if (payloadLength > 5) {
                                     string ja3Hash = ExtractJA3(frame, payloadStart, payloadLength);
                                     if (!string.IsNullOrEmpty(ja3Hash)) {
-                                        // Safe IPv4 extraction (already validated length)
                                         string ndisDestIp = $"{frame[ipHeaderStart + 16]}.{frame[ipHeaderStart + 17]}.{frame[ipHeaderStart + 18]}.{frame[ipHeaderStart + 19]}";
-                                        string ndisJson = "{\"Provider\":\"NDIS\", \"EventName\":\"TLS_JA3_FINGERPRINT\", \"DestIp\":\"" + ndisDestIp + "\", \"Port\":\"" + destPort + "\", \"JA3\":\"" + ja3Hash + "\"}";
-                                        EventQueue.Enqueue(ndisJson);
+                                        EventQueue.Enqueue(new C2Event { Provider = "NDIS", EventName = "TLS_JA3_FINGERPRINT", DestIp = ndisDestIp, Port = destPort.ToString(), JA3 = ja3Hash });
                                     }
                                 }
                             } catch {
@@ -464,7 +503,22 @@ public class RealTimeC2Sensor {
                             return;
                         }
 
-                        if (data.ProviderName.Contains("File") && !data.EventName.Contains("Create")) return;
+                        if (data.ProviderName.Contains("Kernel-File") && (data.EventName == "Create" || data.EventName == "NameCreate")) {
+                            string fileName = (data.PayloadStringByName("FileName") ?? "").ToLowerInvariant();
+
+                            // High-speed filter: only process Named Pipes
+                            if (fileName.Contains("\\device\\namedpipe\\") || fileName.Contains("\\pipe\\")) {
+                                foreach (string pipePattern in MaliciousPipes) {
+                                    if (fileName.Contains(pipePattern)) {
+                                        string pipeProc = string.IsNullOrEmpty(data.ProcessName) ? data.ProcessID.ToString() : data.ProcessName;
+                                        EventQueue.Enqueue(new C2Event { Provider = "P2P_Guard", EventName = "MALICIOUS_PIPE_CREATED", Image = pipeProc, CommandLine = fileName, SuspiciousFlags = "Known C2 Named Pipe" });
+                                        break;
+                                    }
+                                }
+                            }
+                            return; // Drop all other file events to preserve CPU
+                        }
+
                         if (data.ProviderName.Contains("DNS") && (int)data.ID != 3008) return;
 
                         destIp = ""; string port = ""; string query = ""; string cmdLine = ""; string size = "0";
@@ -512,11 +566,23 @@ public class RealTimeC2Sensor {
                             } catch { if (string.IsNullOrEmpty(destIp)) destIp = "DECODER_FAILED"; }
                         }
 
+                        string trafficDirection = "Egress";
+
                         if (isNetworkEvent) {
-                            if (string.IsNullOrEmpty(destIp) || destIp.StartsWith("192.168.") || destIp.StartsWith("10.") ||
-                                (destIp.StartsWith("127.") && destIp != "127.0.0.99") ||
-                                destIp.StartsWith("169.254.") || destIp.StartsWith("224.") || destIp.StartsWith("239.") ||
-                                destIp.StartsWith("fe80") || destIp == "::1" || destIp == "DECODER_FAILED") return;
+                            bool isPrivateIp = destIp.StartsWith("192.168.") || destIp.StartsWith("10.") || destIp.StartsWith("172.");
+
+                            if (isPrivateIp) {
+                                // Only allow lateral tracking for specific P2P ports (SMB, RPC, WinRM)
+                                if (port == "445" || port == "135" || port == "5985" || port == "5986") {
+                                    trafficDirection = "Lateral";
+                                } else {
+                                    return; // Drop internal web/broadcast noise
+                                }
+                            } else if (destIp.StartsWith("127.") && destIp != "127.0.0.99" || 
+                                       destIp.StartsWith("169.254.") || destIp.StartsWith("224.") || 
+                                       destIp.StartsWith("239.") || destIp.StartsWith("fe80") || destIp == "::1" || destIp == "DECODER_FAILED") {
+                                return;
+                            }
                         }
 
                         // --- NETWORK THREAT INTEL AHO-CORASICK EVALUATION ---
@@ -524,29 +590,18 @@ public class RealTimeC2Sensor {
                         if (NetworkTiTitles.Length > 0) {
                             string scanTarget = "";
                             if (data.ProviderName.Contains("DNS") && !string.IsNullOrEmpty(query)) {
-                                scanTarget = "." + query.ToLowerInvariant(); 
+                                scanTarget = "." + query.ToLowerInvariant();
                             } else if (isNetworkEvent && !string.IsNullOrEmpty(destIp)) {
                                 scanTarget = destIp;
                             }
 
                             if (!string.IsNullOrEmpty(scanTarget)) {
-                                List<int> matchIndices = NetworkAc.SearchAll(scanTarget);
-                                if (matchIndices.Count > 0) {
-                                    List<string> tags = new List<string>();
+                                int matchIdx = NetworkAc.SearchFirst(scanTarget);
+                                if (matchIdx >= 0) {
+                                    string matchedKey = NetworkTiKeys[matchIdx];
 
-                                    foreach (int matchIdx in matchIndices) {
-                                        string matchedKey = NetworkTiKeys[matchIdx];
-
-                                        if (isNetworkEvent && scanTarget.Length != matchedKey.Length) {
-                                            continue;
-                                        }
-
-                                        if (!tags.Contains(NetworkTiTitles[matchIdx])) {
-                                            tags.Add(NetworkTiTitles[matchIdx]);
-                                        }
-                                    }
-                                    if (tags.Count > 0) {
-                                        threatIntelTag = string.Join(" | ", tags);
+                                    if (!isNetworkEvent || scanTarget.Length == matchedKey.Length) {
+                                        threatIntelTag = NetworkTiTitles[matchIdx];
                                     }
                                 }
                             }
@@ -561,15 +616,51 @@ public class RealTimeC2Sensor {
                             if (skipDns) return;
                         }
 
-                        // Embed the Threat Intel tag directly into the standard telemetry payload
-                        string json = "{\"Provider\":\"" + data.ProviderName + "\", \"EventName\":\"" + data.EventName + "\", \"TimeStamp\":\"" + data.TimeStamp.ToString("O") + "\", \"DestIp\":\"" + destIp + "\", \"Port\":\"" + port + "\", \"Query\":\"" + query + "\", \"Image\":\"" + image.Replace("\\", "\\\\") + "\", \"CommandLine\":\"" + cmdLine.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\", \"PID\":\"" + pid + "\", \"TID\":\"" + tid + "\", \"Size\":\"" + size + "\", \"ThreatIntel\":\"" + threatIntelTag.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
-                        EventQueue.Enqueue(json);
+                        // Embed the Threat Intel tag AND Traffic Direction directly into the standard telemetry payload
+                        string safeProvider = EscapeJson(data.ProviderName ?? "Unknown");
+                        string safeEventName = EscapeJson(data.EventName ?? "Unknown");
+                        string safeDestIp    = EscapeJson(destIp ?? "");
+                        string safePort      = EscapeJson(port ?? "");
+                        string safeQuery     = EscapeJson(query ?? "");
+                        string safeImage     = EscapeJson(image ?? "Unknown");
+                        string safeCmdLine   = EscapeJson(cmdLine ?? "");
+                        string safeThreatIntel = EscapeJson(threatIntelTag ?? "");
+                        string safeTrafficDirection = EscapeJson(trafficDirection ?? "Egress");
 
-                    } catch {}
+                        string timeStampStr = data.TimeStamp.ToString("O");
+                        string json = null;
+
+                        if (!string.IsNullOrEmpty(threatIntelTag)) {
+                            json = string.Format(@"{{""Provider"":""{0}"",""EventName"":""{1}"",""TimeStamp"":""{2}"",""DestIp"":""{3}"",""Port"":""{4}"",""Query"":""{5}"",""Image"":""{6}"",""CommandLine"":""{7}"",""PID"":""{8}"",""TID"":""{9}"",""Size"":""{10}"",""ThreatIntel"":""{11}"",""TrafficDirection"":""{12}""}}",
+                                safeProvider, safeEventName, timeStampStr, safeDestIp, safePort, safeQuery, safeImage, safeCmdLine, pid, tid, size, safeThreatIntel, safeTrafficDirection);
+                        }
+
+                        EventQueue.Enqueue(new C2Event {
+                            Provider = data.ProviderName,
+                            EventName = data.EventName,
+                            TimeStamp = timeStampStr,
+                            DestIp = destIp,
+                            Port = port,
+                            Query = query,
+                            Image = image,
+                            CommandLine = cmdLine,
+                            PID = pid,
+                            TID = tid,
+                            Size = size,
+                            ThreatIntel = threatIntelTag,
+                            TrafficDirection = trafficDirection,
+                            RawJson = json
+                        });
+
+                    } catch (Exception ex) {
+                        try {
+                            EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[ETW HOTPATH ERROR] " + EscapeJson(ex.Message) });
+                        } catch { /* prevent recursive failure if enqueue itself fails */ }
+                    }
                 };
                 _session.Source.Process();
             } catch (Exception ex) {
-                EventQueue.Enqueue("{\"Error\": \"" + ex.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}");
+                EventQueue.Enqueue(new C2Event { Error = EscapeJson(ex.Message) });
             }
         });
     }
@@ -584,7 +675,7 @@ public class RealTimeC2Sensor {
         if (_mlEnginePtr != IntPtr.Zero) {
             teardown_engine(_mlEnginePtr);
             _mlEnginePtr = IntPtr.Zero;
-            EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[ML ENGINE] Native Rust DLL safely unloaded and DB flushed.\"}");
+            EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[ML ENGINE] Native Rust DLL safely unloaded and DB flushed." });
         }
     }
 
@@ -641,17 +732,17 @@ public class RealTimeC2Sensor {
             }
         }
 
-        public List<int> SearchAll(string text) {
-            List<int> matches = new List<int>();
-            if (string.IsNullOrEmpty(text)) return matches;
+        // ZERO-ALLOCATION SEARCH: Returns the first match index, bypassing GC overhead completely.
+        public int SearchFirst(string text) {
+            if (string.IsNullOrEmpty(text)) return -1;
             Node current = Root;
-            foreach (char originalC in text) {
-                char c = char.ToLowerInvariant(originalC);
+            for (int i = 0; i < text.Length; i++) {
+                char c = char.ToLowerInvariant(text[i]);
                 while (current != null && !current.Children.ContainsKey(c)) current = current.Fail;
                 current = current != null ? current.Children[c] : Root;
-                if (current.Outputs.Count > 0) matches.AddRange(current.Outputs);
+                if (current != null && current.Outputs.Count > 0) return current.Outputs[0];
             }
-            return matches;
+            return -1;
         }
     }
 }
