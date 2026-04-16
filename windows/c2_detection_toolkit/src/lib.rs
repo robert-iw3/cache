@@ -8,7 +8,7 @@
  * DBSCAN, 4D K-Means, Fast-Flux, and DGA heuristics via the C-ABI boundary.
  *============================================================================================*/
 
-use rusqlite::{Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -283,6 +283,7 @@ impl MathEngine {
 pub struct BehavioralEngine {
     conn: Connection,
     heuristics: ThreatHeuristics,
+    last_groom_time: f64,
 }
 
 impl BehavioralEngine {
@@ -297,7 +298,14 @@ impl BehavioralEngine {
             Err(_) => Connection::open_in_memory().unwrap_or_else(|_| Connection::open_in_memory().expect("In-memory DB failed")),
         };
 
-        let _ = conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+        let _ = conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;      -- Keep temp tables and indices in RAM
+            PRAGMA mmap_size = 268435456;    -- 256MB memory map for zero-copy I/O
+            PRAGMA cache_size = -64000;      -- 64MB page cache
+            PRAGMA busy_timeout = 5000;      -- Prevent lock contention during FFI bursts
+        ");
         let _ = conn.execute(
             "CREATE TABLE IF NOT EXISTS temporal_flow_state (
                 context_hash TEXT PRIMARY KEY, destination_ip TEXT, domain TEXT,
@@ -305,7 +313,11 @@ impl BehavioralEngine {
             )", []
         );
 
-        BehavioralEngine { conn, heuristics: ThreatHeuristics::new() }
+        BehavioralEngine {
+            conn,
+            heuristics: ThreatHeuristics::new(),
+            last_groom_time: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64(),
+        }
     }
 
     pub fn evaluate_flow(&mut self, flow: IncomingTelemetry) -> Option<OutgoingAlert> {
@@ -321,6 +333,42 @@ impl BehavioralEngine {
         if has_invalid_math {
             return None;
         }
+
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+
+        // Index Maintenance
+        if now_sec - self.last_groom_time > 3600.0 {
+            // Drop flows older than 72 hours
+            let stale_threshold = now_sec - (72.0 * 3600.0);
+            let _ = self.conn.execute(
+                "DELETE FROM temporal_flow_state WHERE last_seen < ?1",
+                params![stale_threshold],
+            );
+
+            // Analyze tables and update query planning statistics
+            let _ = self.conn.execute_batch("PRAGMA optimize;");
+
+            self.last_groom_time = now_sec;
+        }
+
+        let dest_ip = flow.dst_ips.last().cloned().unwrap_or_default();
+        let domain = flow.domain.clone().unwrap_or_default();
+        let packet_sizes_str = serde_json::to_string(&flow.packet_sizes).unwrap_or_else(|_| "[]".to_string());
+        let intervals_str = serde_json::to_string(&flow.intervals).unwrap_or_else(|_| "[]".to_string());
+        let last_seen = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+
+        let _ = self.conn.execute(
+            "INSERT OR REPLACE INTO temporal_flow_state
+            (context_hash, destination_ip, domain, packet_sizes, timestamps, last_seen)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![&flow.key, dest_ip, domain, packet_sizes_str, intervals_str, last_seen],
+        );
 
         let n_intervals = flow.intervals.len();
         if n_intervals < 8 { return None; }
@@ -634,7 +682,10 @@ pub extern "C" fn teardown_engine(engine_ptr: *mut Mutex<BehavioralEngine>) {
         unsafe {
             let engine_box = Box::from_raw(engine_ptr);
             let engine = match engine_box.lock() { Ok(guard) => guard, Err(p) => p.into_inner() };
-            let _ = engine.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            // Execute PRAGMAs individually to prevent batch-abort on result rows
+            let _ = engine.conn.execute("PRAGMA optimize;", []);
+            // Force the Write-Ahead Log to commit to the main DB and shrink to 0 bytes
+            let _ = engine.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);", []);
         }
     }
 }

@@ -441,8 +441,8 @@ function Initialize-NetworkThreatIntel {
             if (Test-Path $TempZipPath) { Remove-Item $TempZipPath -Force -ErrorAction SilentlyContinue }
             if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
         }
-
-        $SigmaFiles = Get-ChildItem -Path $SigmaBaseDir -Include "*.yml", "*.yaml" -Recurse
+    }
+        $SigmaFiles = Get-ChildItem -Path "$SigmaBaseDir\*" -Include "*.yml", "*.yaml" -Recurse
         $sigmaCount = 0
 
         foreach ($file in $SigmaFiles) {
@@ -473,7 +473,7 @@ function Initialize-NetworkThreatIntel {
                 }
             } catch { Write-Diag "Failed to parse custom rule file: $($file.Name)" "WARN" }
         }
-    }
+
     # Update the cache marker so we skip next time
     New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
     Write-Diag "Gatekeeper Compilation: Parsed $sigmaCount signatures from SigmaHQ." "STARTUP"
@@ -1225,13 +1225,13 @@ try {
             $lastMLRunTime = $now
         }
 
-        # --- LOG ROTATION ENGINE ---
+        # --- LOG ROTATION & GROOMING ENGINE ---
         if ($dataBatch.Count -gt 0) {
             if (Test-Path $OutputPath) {
                 if ((Get-Item $OutputPath).Length -gt 50MB) {
                     $archiveName = $OutputPath.Replace(".jsonl", "_$($now.ToString('yyyyMMdd_HHmm')).jsonl")
                     Rename-Item -Path $OutputPath -NewName $archiveName -Force
-                    Write-Diag "Log rotated. Archived to $archiveName" "INFO"
+                    Write-Diag "Alert log rotated. Archived to $archiveName" "INFO"
                 }
             }
 
@@ -1245,11 +1245,24 @@ try {
                 if ((Get-Item $UebaLogPath).Length -gt 50MB) {
                     $archiveName = $UebaLogPath.Replace(".jsonl", "_$($now.ToString('yyyyMMdd_HHmm')).jsonl")
                     Rename-Item -Path $UebaLogPath -NewName $archiveName -Force
+                    Write-Diag "UEBA log rotated. Archived to $archiveName" "INFO"
                 }
             }
             $uebaOutput = $uebaBatch -join "`r`n"
             [System.IO.File]::AppendAllText($UebaLogPath, $uebaOutput + "`r`n")
             $uebaBatch.Clear()
+        }
+
+        # === DISK PROTECTION: LOG GROOMING (GARBAGE COLLECTION) ===
+        # To save CPU, only evaluate log retention once an hour (at the top of the hour)
+        if ($now.Minute -eq 0 -and $now.Second -lt 15) {
+            $RetentionDays = 3 # Keep 3 days of heavy UEBA telemetry
+            $staleLogs = Get-ChildItem -Path $LogDir -Filter "*.jsonl" | Where-Object { $_.LastWriteTime -lt $now.AddDays(-$RetentionDays) }
+            
+            foreach ($stale in $staleLogs) {
+                Remove-Item -Path $stale.FullName -Force -ErrorAction SilentlyContinue
+                Write-Diag "Disk Protection: Groomed stale log file -> $($stale.Name)" "INFO"
+            }
         }
 
         $activeFlows = $connectionHistory.Keys.Count
