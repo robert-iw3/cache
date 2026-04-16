@@ -57,6 +57,7 @@ public class RealTimeC2Sensor {
     // --- NETWORK THREAT INTEL STATE MACHINE ---
     private static AhoCorasick NetworkAc = new AhoCorasick();
     private static string[] NetworkTiTitles = new string[0];
+    private static string[] NetworkTiKeys = new string[0];
 
     // AppGuard Web Server Hashsets
     private static HashSet<string> WebDaemons = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -121,7 +122,7 @@ public class RealTimeC2Sensor {
             if (needsRebuild) {
                 NetworkAc.Build(tiKeys);
                 NetworkTiTitles = tiTitles;   // store the new list for next comparison
-
+                NetworkTiKeys = tiKeys;
                 EventQueue.Enqueue("{\"Provider\":\"DiagLog\", \"Message\":\"[THREAT INTEL] Aho-Corasick State Machine armed with " + tiKeys.Length + " network signatures.\"}");
             }
             else {
@@ -523,7 +524,7 @@ public class RealTimeC2Sensor {
                         if (NetworkTiTitles.Length > 0) {
                             string scanTarget = "";
                             if (data.ProviderName.Contains("DNS") && !string.IsNullOrEmpty(query)) {
-                                scanTarget = query.ToLowerInvariant();
+                                scanTarget = "." + query.ToLowerInvariant(); 
                             } else if (isNetworkEvent && !string.IsNullOrEmpty(destIp)) {
                                 scanTarget = destIp;
                             }
@@ -531,7 +532,15 @@ public class RealTimeC2Sensor {
                             if (!string.IsNullOrEmpty(scanTarget)) {
                                 int matchIdx = NetworkAc.SearchFirst(scanTarget);
                                 if (matchIdx >= 0) {
-                                    threatIntelTag = NetworkTiTitles[matchIdx];
+                                    // DOUBLE-CHECK FOR IP BLEED: 
+                                    // If the match was an IP address, ensure it's an EXACT match, not a substring.
+                                    string matchedKey = NetworkTiKeys[matchIdx]; // Note: requires exposing TiKeys array in initialization
+                                    
+                                    if (isNetworkEvent && scanTarget.Length != matchedKey.Length) {
+                                        // False positive substring bleed detected. Ignore.
+                                    } else {
+                                        threatIntelTag = NetworkTiTitles[matchIdx];
+                                    }
                                 }
                             }
                         }

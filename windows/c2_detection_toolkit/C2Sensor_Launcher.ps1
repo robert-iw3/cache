@@ -294,41 +294,67 @@ function Initialize-TamperGuard {
 Initialize-TamperGuard
 
 # =========================================================================
-# JA3 THREAT INTEL LOADER
+# JA3 THREAT INTEL LOADER (ABUSE.CH SSLBL)
 # =========================================================================
-$global:MaliciousJA3Cache = @()
+$global:MaliciousJA3Cache = [System.Collections.Generic.HashSet[string]]::new()
+$Ja3CacheAgeHours = 24
+$needsJa3Download = $true
+
+if (Test-Path $Ja3CachePath) {
+    $age = ((Get-Date) - (Get-Item $Ja3CachePath).LastWriteTime).TotalHours
+    if ($age -lt $Ja3CacheAgeHours) {
+        $needsJa3Download = $false
+    }
+}
+
+if ($needsJa3Download) {
+    Write-Diag "Fetching latest JA3 Fingerprints from abuse.ch SSLBL..." "STARTUP"
+    try {
+        $csvData = Invoke-WebRequest -Uri "https://sslbl.abuse.ch/blacklist/ja3_fingerprints.csv" -UseBasicParsing -ErrorAction Stop
+        $hashes = [System.Collections.Generic.List[string]]::new()
+
+        # Parse the CSV and extract only the 32-character MD5 hashes, ignoring comments
+        foreach ($line in ($csvData.Content -split "`n")) {
+            if ($line -match "^([a-fA-F0-9]{32}),") {
+                $hashes.Add($matches[1].ToLower())
+            }
+        }
+
+        if ($hashes.Count -gt 0) {
+            $hashes | ConvertTo-Json -Compress | Out-File -FilePath $Ja3CachePath -Encoding UTF8 -Force
+            Write-Diag "Successfully synced $($hashes.Count) JA3 signatures from abuse.ch." "STARTUP"
+        }
+    } catch {
+        Write-Diag "Failed to pull JA3 from abuse.ch. Relying on local cache/defaults." "WARN"
+    }
+}
+
+# Load the Cache into the O(1) HashSet
 if (Test-Path $Ja3CachePath) {
     try {
-        $global:MaliciousJA3Cache = Get-Content $Ja3CachePath -Raw | ConvertFrom-Json
+        $cachedJa3 = Get-Content $Ja3CachePath -Raw | ConvertFrom-Json
+        foreach ($hash in $cachedJa3) { [void]$global:MaliciousJA3Cache.Add($hash) }
         Write-Diag "Loaded $($global:MaliciousJA3Cache.Count) JA3 signatures from dynamic Threat Intel cache." "STARTUP"
     } catch { Write-Diag "Failed to parse JA3 JSON cache. Falling back to offline defaults." "WARN" }
 }
 
+# Fallback to Hardcoded Offline Signatures
 if ($global:MaliciousJA3Cache.Count -eq 0) {
-    $global:MaliciousJA3Cache = @(
-        # --- Cobalt Strike & Metasploit ---
-        "a0e9f5d64349fb13191bc781f81f42e1", # Metasploit / MSFVenom / Older Cobalt Strike
+    $offlineDefaults = @(
+        "a0e9f5d64349fb13191bc781f81f42e1", # Metasploit / MSFVenom
         "b32309a26951912be7dba376398abc3b", # Cobalt Strike (Common Profile 1)
         "eb88d0b3e1961a0562f006e5ce2a0b87", # Cobalt Strike (Malleable C2 Default)
         "1ce21ed04b6d4128f7fb6b22b0c36cb1", # Cobalt Strike (Common Profile 3)
         "ee031b874122d97ab269e0d8740be31a", # Metasploit HeartBleed/TLS Scanner
-
-        # --- Go-Based C2s (Sliver, Merlin, Havoc) ---
         "51c64c77e60f3980eea90869b68c58a8", # Sliver / Standard Go HTTP/TLS Client
         "e0a786fa0d151121d51f2249e49195b0", # Merlin C2
         "d891b0c034919cb44f128e4e97aeb7e6", # Havoc C2 Default
-
-        # --- Python-Based C2s (Empire, Mythic, Pupy) ---
         "771c93a02bb801fbdbb13b73bcba0d6b", # Empire / Python Requests Default
         "cd08e31494f9531f560d64c695473da9", # Mythic / Generic Python Default
         "3b5074b1b5d032e5620f69f9f700ff0e", # Pupy RAT
-
-        # --- .NET/C# Frameworks (Covenant, AsyncRAT, Quasar) ---
         "8f199859f1f0e4b7ba29e3ddc6ee9b71", # Covenant Grunt / Standard .NET WebClient
         "6d89b37a488e0b6dfde0c59828e8331b", # Remcos RAT
         "08ef1bdcbdbba6ce64daec0ab2ea0bc1", # NanoCore RAT
-
-        # --- Commodity Malware / Ransomware Initial Access ---
         "2707bb320ebbb6d0c64d8a5decc81b53", # Trickbot
         "4d7a28d6f2263ed61de88ca66eb011e3", # Emotet
         "18f152d0b50302ffab23fc47545de999", # IcedID
@@ -336,6 +362,7 @@ if ($global:MaliciousJA3Cache.Count -eq 0) {
         "c45d36e2fde376eec6a382b6c31e67b2", # Brute Ratel C4 (Default Config)
         "518b7eb09de4e10173bc51c1ff76b2c2"  # Dridex
     )
+    foreach ($hash in $offlineDefaults) { [void]$global:MaliciousJA3Cache.Add($hash) }
     Write-Diag "Loaded $($global:MaliciousJA3Cache.Count) default offline JA3 signatures." "STARTUP"
 }
 
@@ -371,8 +398,19 @@ function Initialize-NetworkThreatIntel {
         }
 
         $SuricataUrls = @(
-            @{ Name = "EmergingThreats_DNS"; Url = "https://rules.emergingthreats.net/open/suricata-8.0.4/rules/emerging-dns.rules" },
-            @{ Name = "ThreatView_CS_C2";    Url = "https://rules.emergingthreats.net/open/suricata-8.0.4/rules/threatview_CS_c2.rules" }
+            # Core C2 & Malware Domains/IPs
+            @{ Name = "ET_DNS"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-dns.rules" },
+            @{ Name = "ET_C2";  Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-c2.rules" },
+            @{ Name = "ET_Malware"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-malware.rules" },
+            @{ Name = "ThreatView_CS_C2"; Url = "https://rules.emergingthreats.net/open/suricata-8.0.4/rules/threatview_CS_c2.rules" },
+            
+            # Active Botnet Nodes & Compromised Drop Zones
+            @{ Name = "ET_BotCC"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-botcc.rules" },
+            @{ Name = "ET_Compromised"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-compromised.rules" },
+            
+            # LOLBins, Reverse Tunnels (Ngrok), and Cloud Exfiltration (Mega/Pastebin)
+            @{ Name = "ET_Policy"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-policy.rules" },
+            @{ Name = "ET_Info"; Url = "https://rules.emergingthreats.net/open/suricata/rules/emerging-info.rules" }
         )
 
         foreach ($src in $SuricataUrls) {
@@ -417,9 +455,8 @@ function Initialize-NetworkThreatIntel {
     $SigmaUpstreamDir = Join-Path $SigmaBaseDir "upstream"
 
     if ($needsDownload -or -not (Test-Path $SigmaUpstreamDir)) {
-        if (-not (Test-Path $SigmaUpstreamDir)) {
-            New-Item -ItemType Directory -Path $SigmaUpstreamDir -Force | Out-Null
-        }
+        if (Test-Path $SigmaUpstreamDir) { Remove-Item -Path $SigmaUpstreamDir -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $SigmaUpstreamDir -Force | Out-Null
 
         $TempZipPath = Join-Path $StagingDir "sigma_master.zip"
         $ExtractPath = Join-Path $StagingDir "sigma_extract"
@@ -429,11 +466,15 @@ function Initialize-NetworkThreatIntel {
             Invoke-WebRequest -Uri "https://github.com/SigmaHQ/sigma/archive/refs/heads/master.zip" -OutFile $TempZipPath -UseBasicParsing -ErrorAction Stop
             Expand-Archive -Path $TempZipPath -DestinationPath $ExtractPath -Force -ErrorAction Stop
 
-            $RuleCategories = @("dns", "network_connection", "proxy", "firewall")
-            foreach ($cat in $RuleCategories) {
-                $RulesPath = Join-Path $ExtractPath "sigma-master\rules\windows\$cat\*"
-                if (Test-Path (Split-Path $RulesPath)) {
-                    Copy-Item -Path $RulesPath -Destination $SigmaUpstreamDir -Recurse -Force
+            $RulesPathsToCopy = @(
+                (Join-Path $ExtractPath "sigma-master\rules\windows\dns_query\*"),
+                (Join-Path $ExtractPath "sigma-master\rules\windows\network_connection\*"),
+                (Join-Path $ExtractPath "sigma-master\rules\network\*")
+            )
+            
+            foreach ($path in $RulesPathsToCopy) {
+                if (Test-Path (Split-Path $path)) {
+                    Copy-Item -Path $path -Destination $SigmaUpstreamDir -Recurse -Force
                 }
             }
         } catch { Write-Diag "Sigma GitHub pull failed. Relying on local cache." "WARN" }
@@ -442,39 +483,56 @@ function Initialize-NetworkThreatIntel {
             if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
-        $SigmaFiles = Get-ChildItem -Path "$SigmaBaseDir\*" -Include "*.yml", "*.yaml" -Recurse
-        $sigmaCount = 0
+    
+    $SigmaFiles = Get-ChildItem -Path "$SigmaBaseDir\*" -Include "*.yml", "*.yaml" -Recurse
+    $sigmaCount = 0
 
-        foreach ($file in $SigmaFiles) {
-            try {
-                $lines = Get-Content $file.FullName
-                $content = $lines -join "`n"
+    foreach ($file in $SigmaFiles) {
+        try {
+            $lines = Get-Content $file.FullName
+            $title = "Unknown Sigma Rule"
+            $inSelectionBlock = $false
+            $activeKey = ""
 
-                if ($content -notmatch "category:\s*(dns|network_connection|proxy|firewall)") { continue }
+            foreach ($line in $lines) {
+                if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
+                if ($line -match "(?i)^\s*selection") { $inSelectionBlock = $true; continue }
+                if ($line -match "(?i)^\s*condition:") { $inSelectionBlock = $false; continue }
 
-                $title = "Unknown Sigma Rule"
-                $inSelectionBlock = $false
+                if ($inSelectionBlock) {
+                    $val = $null
 
-                foreach ($line in $lines) {
-                    if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
-                    if ($line -match "(?i)selection:") { $inSelectionBlock = $true; continue }
-                    if ($line -match "(?i)condition:") { $inSelectionBlock = $false; continue }
+                    if ($line -match "(?i)^\s*(QueryName|Query|DestinationHostname|DestinationIp|dns\.question\.name|domain|c-dns)(?:\|[a-zA-Z0-9_]+)*:\s*(.*)") {
+                        $activeKey = $matches[1]
+                        $valStr = $matches[2].Trim(" '`"[]")
+                        if ($valStr -and $valStr -notmatch "^$") { $val = $valStr }
+                    }
+                    elseif ($activeKey -ne "" -and $line -match "^\s*-\s*(.+)") {
+                        $val = $matches[1].Trim(" '`"[]")
+                    }
+                    elseif ($line -match "^\s*[a-zA-Z0-9_]+\s*:") {
+                        $activeKey = "" # Hit an irrelevant key, reset state
+                    }
 
-                    if ($inSelectionBlock -and $line -match "(?i)(Query|DestinationHostname|DestinationIp)\|?(contains|endswith|startswith)?:\s*(.+)") {
-                        $val = $matches[3].Trim(" '`"")
-                        $val = $val -replace '^\*|\*$', ''
-
-                        if (-not [string]::IsNullOrWhiteSpace($val) -and $val.Length -gt 4) {
-                            $TiKeys.Add($val.ToLower())
+                    if ($val) {
+                        $cleanVal = $val -replace '^\*|\*$', ''
+                        if (-not [string]::IsNullOrWhiteSpace($cleanVal) -and $cleanVal.Length -gt 4) {
+                            
+                            # C# Aho-Corasick Boundary Protection
+                            if ($activeKey -match "(?i)Query|Hostname|dns\.question\.name|domain|c-dns" -and -not $cleanVal.StartsWith(".")) {
+                                $cleanVal = ".$cleanVal"
+                            }
+                            
+                            $TiKeys.Add($cleanVal.ToLower())
                             $TiTitles.Add("Sigma: $title")
                             $sigmaCount++
                         }
                     }
                 }
-            } catch { Write-Diag "Failed to parse custom rule file: $($file.Name)" "WARN" }
-        }
+            }
+        } catch { Write-Diag "Failed to parse custom rule file: $($file.Name)" "WARN" }
+    }
 
-    # Update the cache marker so we skip next time
     New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
     Write-Diag "Gatekeeper Compilation: Parsed $sigmaCount signatures from SigmaHQ." "STARTUP"
     Write-Diag "Threat Intel Compilation Complete. Passing $($TiKeys.Count) signatures to Memory." "STARTUP"
@@ -790,7 +848,7 @@ try {
             if ($evt.Provider -eq "NDIS" -and $evt.EventName -eq "TLS_JA3_FINGERPRINT") {
                 Write-Diag "JA3 HASH EXTRACTED: $($evt.DestIp) -> $($evt.JA3)" "INFO"
 
-                if ($global:MaliciousJA3Cache -contains $evt.JA3) {
+                if ($global:MaliciousJA3Cache.Contains($evt.JA3)) {
                     $owningProcess = "Unknown"
                     foreach ($k in $flowMetadata.Keys) {
                         if ($k -match "IP_$($evt.DestIp)") {
