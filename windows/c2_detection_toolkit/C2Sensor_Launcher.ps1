@@ -470,17 +470,9 @@ function Initialize-NetworkThreatIntel {
             Invoke-WebRequest -Uri "https://github.com/SigmaHQ/sigma/archive/refs/heads/master.zip" -OutFile $TempZipPath -UseBasicParsing -ErrorAction Stop
             Expand-Archive -Path $TempZipPath -DestinationPath $ExtractPath -Force -ErrorAction Stop
 
-            $RulesPathsToCopy = @(
-                (Join-Path $ExtractPath "sigma-master\rules\windows\dns_query\*"),
-                (Join-Path $ExtractPath "sigma-master\rules\windows\network_connection\*"),
-                (Join-Path $ExtractPath "sigma-master\rules\network\*")
-            )
-            
-            foreach ($path in $RulesPathsToCopy) {
-                if (Test-Path (Split-Path $path)) {
-                    Copy-Item -Path $path -Destination $SigmaUpstreamDir -Recurse -Force
-                }
-            }
+            $AllRulesPath = Join-Path $ExtractPath "sigma-master\rules\*"
+            Copy-Item -Path $AllRulesPath -Destination $SigmaUpstreamDir -Recurse -Force
+
         } catch { Write-Diag "Sigma GitHub pull failed. Relying on local cache." "WARN" }
         finally {
             if (Test-Path $TempZipPath) { Remove-Item $TempZipPath -Force -ErrorAction SilentlyContinue }
@@ -495,35 +487,45 @@ function Initialize-NetworkThreatIntel {
         try {
             $lines = Get-Content $file.FullName
             $title = "Unknown Sigma Rule"
-            $inSelectionBlock = $false
+            $inDetection = $false
             $activeKey = ""
 
             foreach ($line in $lines) {
                 if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
-                if ($line -match "(?i)^\s*selection") { $inSelectionBlock = $true; continue }
-                if ($line -match "(?i)^\s*condition:") { $inSelectionBlock = $false; continue }
+                
+                # Enter the master detection block
+                if ($line -match "(?i)^\s*detection:") { $inDetection = $true; continue }
+                
+                # Exit the detection block if we hit condition or metadata
+                if ($inDetection -and $line -match "(?i)^\s*(condition|falsepositives|level|tags|status|author|date|description):") { 
+                    $inDetection = $false; continue 
+                }
 
-                if ($inSelectionBlock) {
+                if ($inDetection) {
                     $val = $null
 
-                    if ($line -match "(?i)^\s*(QueryName|Query|DestinationHostname|DestinationIp|dns\.question\.name|domain|c-dns)(?:\|[a-zA-Z0-9_]+)*:\s*(.*)") {
-                        $activeKey = $matches[1]
+                    # Match Key: Value (Accounts for optional YAML array dash before the key)
+                    if ($line -match "(?i)^\s*(?:-\s*)?[a-zA-Z0-9_\-\.]*(query|hostname|domain|ip|name|destination)[a-zA-Z0-9_\-\.]*(?:\|[a-zA-Z0-9_]+)*:\s*(.*)") {
+                        $activeKey = $matches[0]
                         $valStr = $matches[2].Trim(" '`"[]")
                         if ($valStr -and $valStr -notmatch "^$") { $val = $valStr }
                     }
+                    # Match array items underneath a valid key
                     elseif ($activeKey -ne "" -and $line -match "^\s*-\s*(.+)") {
                         $val = $matches[1].Trim(" '`"[]")
                     }
-                    elseif ($line -match "^\s*[a-zA-Z0-9_]+\s*:") {
-                        $activeKey = "" # Hit an irrelevant key, reset state
+                    # Hit an irrelevant key, reset the active key state
+                    elseif ($line -match "^\s*(?:-\s*)?[a-zA-Z0-9_\-\.]+\s*:") {
+                        $activeKey = "" 
                     }
 
                     if ($val) {
-                        $cleanVal = $val -replace '^\*|\*$', ''
+                        # Sanitize indicators
+                        $cleanVal = $val -replace '^\*|\*$', '' -replace '^\\|\\$', '' -replace '^''|''$', ''
                         if (-not [string]::IsNullOrWhiteSpace($cleanVal) -and $cleanVal.Length -gt 4) {
                             
-                            # C# Aho-Corasick Boundary Protection
-                            if ($activeKey -match "(?i)Query|Hostname|dns\.question\.name|domain|c-dns" -and -not $cleanVal.StartsWith(".")) {
+                            # C# Aho-Corasick Boundary Protection (Pad domains with leading dot)
+                            if ($activeKey -match "(?i)query|hostname|domain|name" -and -not $cleanVal.StartsWith(".")) {
                                 $cleanVal = ".$cleanVal"
                             }
                             
@@ -540,7 +542,7 @@ function Initialize-NetworkThreatIntel {
     New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
     Write-Diag "Gatekeeper Compilation: Parsed $sigmaCount signatures from SigmaHQ." "STARTUP"
     Write-Diag "Threat Intel Compilation Complete. Passing $($TiKeys.Count) signatures to Memory." "STARTUP"
-
+    $TiKeys | Out-File "$LogDir\Compiled_ThreatIntel.txt"
     return @{ Keys = $TiKeys.ToArray(); Titles = $TiTitles.ToArray() }
 }
 

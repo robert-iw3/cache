@@ -530,16 +530,23 @@ public class RealTimeC2Sensor {
                             }
 
                             if (!string.IsNullOrEmpty(scanTarget)) {
-                                int matchIdx = NetworkAc.SearchFirst(scanTarget);
-                                if (matchIdx >= 0) {
-                                    // DOUBLE-CHECK FOR IP BLEED: 
-                                    // If the match was an IP address, ensure it's an EXACT match, not a substring.
-                                    string matchedKey = NetworkTiKeys[matchIdx]; // Note: requires exposing TiKeys array in initialization
+                                List<int> matchIndices = NetworkAc.SearchAll(scanTarget);
+                                if (matchIndices.Count > 0) {
+                                    List<string> tags = new List<string>();
                                     
-                                    if (isNetworkEvent && scanTarget.Length != matchedKey.Length) {
-                                        // False positive substring bleed detected. Ignore.
-                                    } else {
-                                        threatIntelTag = NetworkTiTitles[matchIdx];
+                                    foreach (int matchIdx in matchIndices) {
+                                        string matchedKey = NetworkTiKeys[matchIdx];
+                                        
+                                        if (isNetworkEvent && scanTarget.Length != matchedKey.Length) {
+                                            continue; 
+                                        }
+                                        
+                                        if (!tags.Contains(NetworkTiTitles[matchIdx])) {
+                                            tags.Add(NetworkTiTitles[matchIdx]);
+                                        }
+                                    }
+                                    if (tags.Count > 0) {
+                                        threatIntelTag = string.Join(" | ", tags);
                                     }
                                 }
                             }
@@ -634,16 +641,17 @@ public class RealTimeC2Sensor {
             }
         }
 
-        public int SearchFirst(string text) {
-            if (string.IsNullOrEmpty(text)) return -1;
+        public List<int> SearchAll(string text) {
+            List<int> matches = new List<int>();
+            if (string.IsNullOrEmpty(text)) return matches;
             Node current = Root;
             foreach (char originalC in text) {
                 char c = char.ToLowerInvariant(originalC);
                 while (current != null && !current.Children.ContainsKey(c)) current = current.Fail;
                 current = current != null ? current.Children[c] : Root;
-                if (current.Outputs.Count > 0) return current.Outputs[0];
+                if (current.Outputs.Count > 0) matches.AddRange(current.Outputs);
             }
-            return -1;
+            return matches;
         }
     }
 }
