@@ -436,6 +436,10 @@ function Initialize-NetworkThreatIntel {
                         $val = $c.Groups[1].Value.ToLower()
                         $val = ($val -replace '\|[0-9a-fA-F]{2}\|', '.') -replace '^\.+|\.+$', ''
 
+                        # === NOISE FILTER: IGNORE COMMON PUBLIC DNS/CDNs IN CONTENT FIELDS ===
+                        $NoisyIps = @("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9")
+                        if ($val -in $NoisyIps) { continue }
+
                         if ($val.Length -gt 4 -and $val -notmatch '^[0-9]+$') {
                             $TiKeys.Add($val)
                             $TiTitles.Add("Suricata: $msg")
