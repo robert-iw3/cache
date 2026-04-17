@@ -136,7 +136,7 @@ if (Test-Path $CompiledDll) {
 
     $SizeMB = [math]::Round(((Get-Item $FinalDest).Length / 1MB), 2)
     Write-Host "`n$cCyan╔══════════════════════════════════════════════════════════════════════════╗$cReset"
-    Write-Host "$cCyan║$cReset $cGreen SUCCESS: Native C2 Engine Compiled Successfully                           $cCyan║$cReset"
+    Write-Host "$cCyan║$cReset $cGreen SUCCESS: Native C2 Engine Compiled Successfully                         $cCyan║$cReset"
     Write-Host "$cCyan║$cReset  Target : $FinalBinaryName"
     Write-Host "$cCyan║$cReset  Size   : $SizeMB MB"
     Write-Host "$cCyan╚══════════════════════════════════════════════════════════════════════════╝$cReset"

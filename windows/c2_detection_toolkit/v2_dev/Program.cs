@@ -22,6 +22,10 @@ namespace C2Console
         public Queue<int> PacketSizes { get; set; } = new Queue<int>();
         public string Domain { get; set; } = "Unknown";
         public string Image { get; set; } = "Unknown";
+        
+        // TUNE: Data Exfiltration Trackers
+        public long TotalBytesOut { get; set; } = 0;
+        public long TotalBytesIn { get; set; } = 0;
     }
 
     public class AlertEvent {
@@ -123,19 +127,24 @@ namespace C2Console
             await SyncJA3Signatures();
             var ti = await ThreatIntelCompiler.SyncAndCompileRules(appDir);
 
-            // 2. Hook Native ETW Engine
+            // 2. Hook Native ETW Engine & Load Configuration
+            string configPath = Path.Combine(appDir, "C2Sensor_Config.ini");
+            WriteDiag("Loading external configuration...", "STARTUP");
+            var config = LoadConfig(configPath);
+
             WriteDiag("Starting Real-Time ETW Session...", "STARTUP");
             RealTimeC2Sensor.InitializeEngine(
                 scriptDir: appDir,
-                dnsExclusions: new[] { ".local", ".corp", "windows.com", "microsoft.com", "azure.com" },
-                processExclusions: new[] { "chrome", "msedge", "teams", "onedrive", "spotify" },
-                ipExclusions: new[] { "^127\\.", "^224\\.", "^239\\.", "^10\\.", "^52\\." },
-                tiKeys: ti.Keys,
-                tiTitles: ti.Titles,
-                webDaemons: new[] { "w3wp", "nginx", "tomcat", "java", "node" },
-                dbDaemons: new[] { "sqlservr", "postgres", "mongod" },
-                shellInterpreters: new[] { "cmd", "powershell", "pwsh", "bash" },
-                suspiciousPaths: new[] { "\\temp\\", "\\programdata\\", "\\inetpub\\wwwroot\\" }
+                dnsExclusions: config.GetValueOrDefault("DnsExclusions", Array.Empty<string>()),
+                processExclusions: config.GetValueOrDefault("ProcessExclusions", Array.Empty<string>()),
+                ipExclusions: config.GetValueOrDefault("IpExclusions", Array.Empty<string>()),
+                maliciousIps: ti.Ips,
+                maliciousDomains: ti.Domains,
+                tiMap: ti.Context,
+                webDaemons: config.GetValueOrDefault("WebDaemons", Array.Empty<string>()),
+                dbDaemons: config.GetValueOrDefault("DbDaemons", Array.Empty<string>()),
+                shellInterpreters: config.GetValueOrDefault("ShellInterpreters", Array.Empty<string>()),
+                suspiciousPaths: config.GetValueOrDefault("SuspiciousPaths", Array.Empty<string>())
             );
 
             RealTimeC2Sensor.StartSession();
@@ -300,6 +309,10 @@ namespace C2Console
                             int size = int.TryParse(evt.Size, out int parsed) ? parsed : 0;
                             FlowMeta[key].PacketSizes.Enqueue(size);
 
+                            // Track Asymmetry
+                            if (evt.EventName.Contains("Send")) FlowMeta[key].TotalBytesOut += size;
+                            else if (evt.EventName.Contains("Recv")) FlowMeta[key].TotalBytesIn += size;
+
                             while (ConnectionHistory[key].Count > 100) ConnectionHistory[key].Dequeue();
                             while (FlowMeta[key].DstIps.Count > ConnectionHistory[key].Count) FlowMeta[key].DstIps.Dequeue();
                             while (FlowMeta[key].PacketSizes.Count > ConnectionHistory[key].Count) FlowMeta[key].PacketSizes.Dequeue();
@@ -314,9 +327,8 @@ namespace C2Console
                     lastMLRunTime = now;
                 }
 
-                // --- 60 SECOND: STALE FLOW & LIGHT GC ---
                 if ((now - lastCleanupTime).TotalSeconds >= 60) {
-                    var staleKeys = LastPingTime.Where(kvp => (now - kvp.Value).TotalSeconds > 300).Select(kvp => kvp.Key).ToList();
+                    var staleKeys = LastPingTime.Where(kvp => (now - kvp.Value).TotalHours > 12).Select(kvp => kvp.Key).ToList();
                     foreach (var key in staleKeys) {
                         ConnectionHistory.TryRemove(key, out _); FlowMeta.TryRemove(key, out _);
                         LoggedFlows.TryRemove(key, out _); LastPingTime.TryRemove(key, out _);
@@ -388,7 +400,6 @@ namespace C2Console
                 int count = historyQueue.Count;
 
                 if (count >= MinSamplesForML) {
-                    if (LastPingTime.TryGetValue(key, out DateTime lastPing) && (now - lastPing).TotalSeconds > 120) continue;
 
                     if (!LoggedFlows.TryGetValue(key, out int loggedCount) || loggedCount != count) {
                         LoggedFlows[key] = count;
@@ -407,12 +418,18 @@ namespace C2Console
                             if (i < sizeArr.Length) alignedSizes.Add(sizeArr[i]);
                         }
 
+                        double duration = (arr[arr.Length - 1] - arr[0]).TotalSeconds;
+                        double sparsity = count > 0 ? duration / count : 0.0;
+                        double asymmetry = meta.TotalBytesIn > 0 ? (double)meta.TotalBytesOut / meta.TotalBytesIn : meta.TotalBytesOut;
+
                         payloadList.Add(new { 
                             key = key, 
                             intervals = intervals, 
                             domain = meta.Domain, 
                             dst_ips = alignedIps, 
                             packet_sizes = alignedSizes,
+                            asymmetry_ratio = asymmetry,
+                            sparsity_index = sparsity,
                             ttls = (int[])null,
                             asns = (int[])null,
                             payload_entropies = (double[])null
@@ -567,23 +584,39 @@ namespace C2Console
 
         static void InitializeEnvironment()
         {
+            if (!Directory.Exists(BaseDir)) Directory.CreateDirectory(BaseDir);
+            
+            // Complete Directory Anti-Tamper Lockdown
+            try {
+                var dirInfo = new DirectoryInfo(BaseDir);
+                var dirSecurity = dirInfo.GetAccessControl();
+                
+                // Block inheritance and wipe existing rules
+                dirSecurity.SetAccessRuleProtection(true, false);
+
+                var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+                var propagate = PropagationFlags.None;
+
+                // 1. SYSTEM
+                dirSecurity.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, inherit, propagate, AccessControlType.Allow));
+                // 2. Administrators
+                dirSecurity.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, inherit, propagate, AccessControlType.Allow));
+                // 3. Current Executing User
+                dirSecurity.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, FileSystemRights.FullControl, inherit, propagate, AccessControlType.Allow));
+
+                dirInfo.SetAccessControl(dirSecurity);
+            } catch (Exception ex) {
+                Console.WriteLine($"[!] CRITICAL WARNING: Directory ACL lockdown failed. {ex.Message}");
+            }
+
             if (!Directory.Exists(DataDir)) Directory.CreateDirectory(DataDir);
             if (!Directory.Exists(LogDir)) Directory.CreateDirectory(LogDir);
 
             if (File.Exists(DiagLogPath)) File.Delete(DiagLogPath);
             DiagWriter = new StreamWriter(new FileStream(DiagLogPath, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
 
-            // Initialize TamperGuard
-            if (!File.Exists(TamperLogPath)) File.Create(TamperLogPath).Dispose();
             try {
-                var fileSecurity = new FileSecurity(TamperLogPath, AccessControlSections.Access);
-                fileSecurity.SetAccessRuleProtection(true, false);
-                fileSecurity.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
-                fileSecurity.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
-                File.SetAccessControl(TamperLogPath, fileSecurity);
-            } catch { WriteDiag("Warning: ACL permission lockdown failed.", "WARN"); }
-
-            try {
+                if (!File.Exists(TamperLogPath)) File.Create(TamperLogPath).Dispose();
                 TamperWriter = new StreamWriter(new FileStream(TamperLogPath, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
             } catch { WriteDiag("Tamper Guard Log completely locked. Operating without disk ledger.", "WARN"); }
         }
@@ -620,8 +653,32 @@ namespace C2Console
             TamperWriter?.Dispose();
             Environment.Exit(0);
         }
-    }
 
+    static Dictionary<string, string[]> LoadConfig(string path)
+        {
+            var config = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            if (!File.Exists(path))
+            {
+                WriteDiag($"CRITICAL: Config file missing at {path}. Using empty arrays.", "ERROR");
+                return config;
+            }
+
+            foreach (var line in File.ReadAllLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith(";") || line.StartsWith("#") || line.StartsWith("[")) continue;
+                
+                var parts = line.Split('=', 2);
+                if (parts.Length == 2)
+                {
+                    config[parts[0].Trim()] = parts[1].Split(',')
+                                                      .Select(s => s.Trim())
+                                                      .Where(s => !string.IsNullOrEmpty(s))
+                                                      .ToArray();
+                }
+            }
+            return config;
+        }
+    }
     // ====================== UTILITY CLASSES ======================
     public static class MathHelpers {
         private static readonly HashSet<char> Vowels = new("aeiou".ToCharArray());
@@ -638,12 +695,33 @@ namespace C2Console
         }
         public static bool IsAnomalousDomain(string domain) {
             if (string.IsNullOrEmpty(domain)) return false;
-            if (domain.Length > 35) return true;
+            string dLow = domain.ToLowerInvariant();
+            if (dLow.Contains("otel") || dLow.Contains("telemetry") || dLow.Contains("api") || dLow.Contains("prod-")) return false;
+            if (domain.Length > 45) return true;
             int digits = domain.Count(char.IsDigit);
             if ((double)digits / domain.Length > 0.45) return true;
-            int vowels = domain.ToLower().Count(c => Vowels.Contains(c));
-            if ((double)vowels / domain.Length < 0.15) return true;
-            return GetEntropy(domain) > 3.8;
+            int vowels = dLow.Count(c => Vowels.Contains(c));
+            if ((double)vowels / domain.Length < 0.10) return true;
+            return GetEntropy(domain) > 4.5;
+        }
+        // Zero-Allocation FNV-1a 64-bit Hash for Domains
+        public static ulong HashDomain(string domain) {
+            if (string.IsNullOrEmpty(domain)) return 0;
+            ulong hash = 14695981039346656037;
+            for (int i = 0; i < domain.Length; i++) {
+                hash ^= char.ToLowerInvariant(domain[i]);
+                hash *= 1099511628211;
+            }
+            return hash;
+        }
+        // Fast IP to 32-bit Integer
+        public static uint IpToUint(string ipAddress) {
+            if (System.Net.IPAddress.TryParse(ipAddress, out var address)) {
+                byte[] bytes = address.GetAddressBytes();
+                if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+                return BitConverter.ToUInt32(bytes, 0);
+            }
+            return 0;
         }
     }
 }

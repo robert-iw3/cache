@@ -36,85 +36,7 @@ param (
 
     # --- Defense Options ---
     [switch]$ArmedMode,
-    [int]$ConfidenceThreshold = 85,
-
-    # --- Exclusions Example (Tune to your environment) ---
-    # DEVELOPER NOTE: Suffix matching. ".windows.com" will safely drop "telemetry.windows.com"
-    [string[]]$DnsExclusions = @(
-        # Local & Internal Routing
-        ".arpa", ".local", ".lan", ".home", ".corp",
-        # Microsoft & Azure Core Telemetry / CDNs
-        "microsoft.com", "windows.com", "windowsupdate.com", "azure.com", "azureedge.net",
-        "azurefd.net", "trafficmanager.net", "live.com", "office.com", "office365.com",
-        "skype.com", "msn.com", "bing.com", "visualstudio.com", "microsoftonline.com",
-        "sharepoint.com", "msedge.net", "msauth.net", "msftauth.net", "applicationinsights.io",
-        "windows.net", "akadns.net", "akamaized.net", "akamaiedge.net", "msocdn.com",
-        # Google & Android Ecosystem
-        "google.com", "googleapis.com", "1e100.net", "gstatic.com", "gvt1.com", "gvt2.com",
-        "youtube.com", "ytimg.com", "googlevideo.com",
-        # Amazon AWS, Cloudflare, & Fastly Edge Networks
-        "amazonaws.com", "cloudfront.net", "cloudflare.com", "cloudflare.net", "fastly.net",
-        # Apple Ecosystem (iTunes, iCloud telemetry)
-        "apple.com", "icloud.com", "mzstatic.com",
-        # Development & Telemetry (Fixes VS Code DGA False Positives)
-        "github.com", "githubusercontent.com", "sentry.io", "vscode.dev", "vsassets.io", "adobe.com", "acrobat.com",
-        # PKI & Certificate Revocation (Fixes svchost DGA False Positives)
-        "digicert.com", "symcb.com", "sectigo.com", "crl.com", "ocsp.com", "lencr.org", "pki.goog",
-        # Unified Communications & Media
-        "zoom.us", "webex.com", "slack-edge.com", "discord.gg", "discordapp.com",
-        # Common Enterprise AV / EDR Telemetry
-        "trendmicro.com", "tmok.tm", "mcafee.com", "trellix.com", "symantec.com", "sophos.com", "crowdstrike.com"
-    ),
-    # WARNING: NEVER add "svchost", "explorer", or "lsass" to this list. C2 beacons hide there.
-    [string[]]$ProcessExclusions = @(
-        # Browsers
-        "chrome", "msedge", "msedgewebview2", "firefox", "brave", "opera", "iexplore",
-        # Heavy Electron / Chat Apps
-        "spotify", "teams", "discord", "slack", "zoom", "webex", "whatsapp",
-        # Cloud Sync & Background Updaters
-        "onedrive", "dropbox", "googledrivesync", "googleupdate", "mousocoreworker", "tiworker",
-        # Safe / Noisy Windows 10/11 UI Components
-        "searchapp", "searchui", "startmenuexperiencehost", "shellexperiencehost",
-        "backgroundtaskhost", "compattelrunner", "fontdrvhost", "dwm", "dashost",
-        # Anti-Virus / Security Engines
-        "coreserviceshell", "msmpeng", "nissrv", "securityhealthservice", "smartscreen"
-    ),
-
-    [string[]]$IpPrefixExclusions = @(
-        # High-Volume CDNs (Microsoft / Google / AWS)
-        "^52\.", "^142\.25[0-9]\.", "^13\.", "^20\.", "^23\.", "^74\.125\.",
-        # Loopback
-        "^127\.",
-        # Multicast (224.x - 239.x)
-        "^2(?:2[4-9]|3[0-9])\.",
-        # Class E & Global Broadcasts (240.x - 255.x)
-        "^2[4-5][0-9]\.",
-        # Trusted Upstream DNS Resolvers (Prevents Port 53 K-Means False Positives)
-        "^1\.1\.1\.1$", "^1\.0\.0\.1$", "^8\.8\.8\.8$", "^8\.8\.4\.4$", "^9\.9\.9\.9$",
-        # Subnet Broadcasts
-        "\.255$"
-    ),
-
-    # ====================== APPGUARD CONFIGURATION ======================
-    [string[]]$WebDaemons = @(
-        "w3wp", "iisexpress", "httpd", "nginx", "lighttpd", "caddy", "traefik", "envoy", "haproxy",
-        "tomcat", "tomcat7", "tomcat8", "tomcat9", "java", "javaw",
-        "node", "dotnet", "python", "python3", "php", "php-cgi", "ruby"
-    ),
-
-    [string[]]$DbDaemons = @(
-        "sqlservr", "mysqld", "mariadbd", "postgres", "oracle", "tnslsnr", "db2sysc", "fbserver",
-        "mongod", "redis-server", "memcached", "couchdb", "influxd", "arangod"
-    ),
-
-    [string[]]$ShellInterpreters = @(
-        "cmd", "powershell", "pwsh", "wscript", "cscript", "bash", "sh", "whoami",
-        "csc", "cvtres", "certutil", "wmic", "rundll32", "regsvr32", "msbuild", "bitsadmin"
-    ),
-
-    [string[]]$SuspiciousPaths = @(
-        "\\temp\\", "\\programdata\\", "\\inetpub\\wwwroot\\", "\\appdata\\", "\\users\\public\\"
-    )
+    [int]$ConfidenceThreshold = 95
 )
 
 $global:IsArmed = $ArmedMode
@@ -137,20 +59,16 @@ $global:ComputerName = $env:COMPUTERNAME
 
 function Submit-SensorAlert {
     param(
-        [string]$Type,
-        [string]$Destination,
-        [string]$Image,
-        [string]$Flags,
-        [int]$Confidence,
-        [string]$AttckMapping = "N/A",
-        [string]$EventId = ([guid]::NewGuid().ToString()),
-        [string]$RawJson = $null,
-        [int]$LearningHit = 0
+        [string]$Type, [string]$Destination, [string]$Image, [string]$Flags,
+        [int]$Confidence, [string]$AttckMapping = "N/A", [string]$EventId = ([guid]::NewGuid().ToString()),
+        [string]$RawJson = $null, [int]$LearningHit = 0
     )
 
     # 1. Deduplication Logic
     $dedupKey = "$($Type)_$($Destination)_$($Flags)_$($Image)"
-    if ($global:cycleAlerts.ContainsKey($dedupKey)) {
+    $isNewAlert = -not $global:cycleAlerts.ContainsKey($dedupKey)
+
+    if (-not $isNewAlert) {
         $global:cycleAlerts[$dedupKey].Count++
         return
     }
@@ -164,26 +82,35 @@ function Submit-SensorAlert {
 
     # 3. Standardized Object Construction
     $alertObj = [PSCustomObject][ordered]@{
-        EventID         = $EventId
-        Count           = 1
+        EventID = $EventId; Count = 1
         Timestamp_Local = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
         Timestamp_UTC   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
-        ComputerName    = $global:ComputerName
-        HostIP          = $global:HostIP
-        SensorUser      = $global:SensorUser
-        EventType       = $Type
-        Destination     = $Destination
-        Image           = $Image
-        SuspiciousFlags = $Flags
-        ATTCKMappings   = $AttckMapping
-        Confidence      = $Confidence
-        Action          = if ($global:IsArmed -and $Confidence -ge $ConfidenceThreshold) { "Mitigated" } else { "Logged" }
+        ComputerName = $global:ComputerName; HostIP = $global:HostIP; SensorUser = $global:SensorUser
+        EventType = $Type; Destination = $Destination; Image = $Image
+        SuspiciousFlags = $Flags; ATTCKMappings = $AttckMapping; Confidence = $Confidence
+        Action = if ($global:IsArmed -and $Confidence -ge $ConfidenceThreshold) { "Mitigated" } else { "Logged" }
     }
 
-    # 4. Queue for Batch Logging & HUD
+    # 4. Queue for Batch Logging (SIEM)
     $global:cycleAlerts[$dedupKey] = $alertObj
 
-    # 5. Immediate Active Defense (If Armed)
+    # 5. INSTANT HUD RENDERING & FAST-PATH MITIGATION
+    if ($Type -eq "ThreatIntel_Match") {
+        # Threat Intel is Deterministic (Known-Bad). Strike instantly.
+        $alertObj.Action = if ($global:IsArmed) { "Mitigated" } else { "Logged" }
+        $alertObj.Confidence = 100
+        Add-AlertMessage "CRITICAL TI: $Flags ($Image)" "$([char]27)[38;2;255;49;49m" # Red
+    } elseif ($alertObj.Action -eq "Mitigated" -or $Confidence -ge 90) {
+        # ML Engine Confirmed Anomaly (Behavioral)
+        Add-AlertMessage "CRITICAL BEHAVIOR: $Flags ($Image)" "$([char]27)[38;2;255;49;49m" # Red
+    } elseif ($LearningHit -gt 0) {
+        # UEBA Engine is actively tracking/learning a baseline
+        Add-AlertMessage "LEARNING: $Flags ($Image) [Pkt:$LearningHit]" "$([char]27)[38;2;255;215;0m" # Gold
+    } else {
+        Add-AlertMessage "STATIC: $Flags ($Image)" "$([char]27)[38;2;255;255;255m" # White
+    }
+
+    # 6. Immediate Active Defense
     if ($alertObj.Action -eq "Mitigated") {
         Invoke-ActiveDefense -ProcName $Image -DestIp $Destination -Confidence $Confidence -Reason $Flags
     }
@@ -212,6 +139,31 @@ public class ConsoleConfig {
 "@
 Add-Type -TypeDefinition $QuickEditCode
 [ConsoleConfig]::DisableQuickEdit()
+
+# ====================== ZERO-ALLOCATION MATH HELPERS ======================
+$MathHelpersCode = @"
+using System;
+public class PSMathHelpers {
+    public static ulong HashDomain(string domain) {
+        if (string.IsNullOrEmpty(domain)) return 0;
+        ulong hash = 14695981039346656037;
+        for (int i = 0; i < domain.Length; i++) {
+            hash ^= char.ToLowerInvariant(domain[i]);
+            hash *= 1099511628211;
+        }
+        return hash;
+    }
+    public static uint IpToUint(string ipAddress) {
+        if (System.Net.IPAddress.TryParse(ipAddress, out var address)) {
+            byte[] bytes = address.GetAddressBytes();
+            if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+            return BitConverter.ToUInt32(bytes, 0);
+        }
+        return 0;
+    }
+}
+"@
+Add-Type -TypeDefinition $MathHelpersCode
 
 # ====================== ENTERPRISE DIRECTORY STRUCTURE ======================
 $DataDir = "C:\ProgramData\C2Sensor\Data"
@@ -354,6 +306,40 @@ function Initialize-TamperGuard {
 }
 Initialize-TamperGuard
 
+function Lockdown-ProjectDir {
+    # Complete Directory Anti-Tamper Lockdown
+    $C2RootPath = "C:\ProgramData\C2Sensor"
+    Write-Diag "Applying strict Anti-Tamper ACLs to $C2RootPath..." "STARTUP"
+    
+    try {
+        # Ensure the root exists before locking it
+        if (-not (Test-Path $C2RootPath)) { New-Item -ItemType Directory -Path $C2RootPath -Force | Out-Null }
+
+        $acl = Get-Acl -Path $C2RootPath
+        
+        # Block inheritance and wipe existing inherited rules from the C:\ drive
+        $acl.SetAccessRuleProtection($true, $false)
+
+        $inheritParams = [System.Security.AccessControl.InheritanceFlags]"ContainerInherit, ObjectInherit"
+        $propagationParams = [System.Security.AccessControl.PropagationFlags]::None
+
+        $systemSid = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+        $adminSid  = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+
+        # Re-apply explicit FullControl to authorized accounts only
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($systemSid, "FullControl", $inheritParams, $propagationParams, "Allow")))
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($adminSid, "FullControl", $inheritParams, $propagationParams, "Allow")))
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($currentUser, "FullControl", $inheritParams, $propagationParams, "Allow")))
+
+        Set-Acl -Path $C2RootPath -AclObject $acl
+        Write-Diag "Anti-Tamper vault sealed successfully." "STARTUP"
+    } catch {
+        Write-Host "`n[!] CRITICAL WARNING: Directory ACL lockdown failed. $($_.Exception.Message)" -ForegroundColor Red
+        Write-Diag "Directory ACL lockdown failed: $($_.Exception.Message)" "ERROR"
+    }
+}
+
 # =========================================================================
 # JA3 THREAT INTEL LOADER (ABUSE.CH SSLBL)
 # =========================================================================
@@ -436,8 +422,9 @@ if ($global:MaliciousJA3Cache.Count -eq 0) {
 function Initialize-NetworkThreatIntel {
     Write-Diag "Initializing Network Threat Intelligence (Suricata)..." "STARTUP"
 
-    $TiKeys = [System.Collections.Generic.List[string]]::new()
-    $TiTitles = [System.Collections.Generic.List[string]]::new()
+    $MaliciousIps = [System.Collections.Generic.List[uint32]]::new()
+    $MaliciousDomains = [System.Collections.Generic.List[uint64]]::new()
+    $TiContext = [System.Collections.Generic.Dictionary[string, string]]::new()
 
     # Cache marker file – if it exists and is < 24h old, skip the download
     $CacheMarker = Join-Path $ScriptDir "threatintel.cache"
@@ -505,7 +492,12 @@ function Initialize-NetworkThreatIntel {
                         $destIps = $matches[1] -split ','
                         foreach ($ip in $destIps) {
                              if ($ip -match "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$" -and $ip -notin $NoisyIps) {
-                                 $TiKeys.Add($ip); $TiTitles.Add("Suricata: $msg"); $suricataCount++
+                                 $ipInt = [PSMathHelpers]::IpToUint($ip)
+                                 if ($ipInt -ne 0 -and -not $MaliciousIps.Contains($ipInt)) {
+                                     $MaliciousIps.Add($ipInt)
+                                     $TiContext[$ip] = "Suricata: $msg"
+                                     $suricataCount++
+                                 }
                              }
                         }
                     }
@@ -535,10 +527,22 @@ function Initialize-NetworkThreatIntel {
                         $isIp = $val -match "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
                         $isDomain = $val -match "^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$"
 
-                        if ($isIp -or $isDomain) {
+                        if ($isIp) {
+                            $ipInt = [PSMathHelpers]::IpToUint($val)
+                            if ($ipInt -ne 0 -and -not $MaliciousIps.Contains($ipInt)) {
+                                $MaliciousIps.Add($ipInt)
+                                $TiContext[$val] = "Suricata: $msg"
+                                $suricataCount++
+                            }
+                        } elseif ($isDomain) {
                             $cleanVal = $val
-                            if ($isDomain -and -not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
-                            $TiKeys.Add($cleanVal); $TiTitles.Add("Suricata: $msg"); $suricataCount++
+                            if (-not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
+                            $domHash = [PSMathHelpers]::HashDomain($cleanVal)
+                            if ($domHash -ne 0 -and -not $MaliciousDomains.Contains($domHash)) {
+                                $MaliciousDomains.Add($domHash)
+                                $TiContext[$cleanVal] = "Suricata: $msg"
+                                $suricataCount++
+                            }
                         }
                     }
                 }
@@ -563,23 +567,42 @@ function Initialize-NetworkThreatIntel {
                 $isIp = $entry -match "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
                 $isDomain = $entry -match "^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$"
 
-                if ($isIp -or $isDomain) {
+                if ($isIp) {
+                    $ipInt = [PSMathHelpers]::IpToUint($entry)
+                    if ($ipInt -ne 0 -and -not $MaliciousIps.Contains($ipInt)) {
+                        $MaliciousIps.Add($ipInt)
+                        $TiContext[$entry] = "Flat-File Intel: $($file.Name)"
+                        $flatCount++
+                    }
+                } elseif ($isDomain) {
                     $cleanVal = $entry
-                    # Pre-pend a dot to domains to match how DNS queries are handled in C2Sensor.cs
-                    if ($isDomain -and -not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
-
-                    $TiKeys.Add($cleanVal)
-                    $TiTitles.Add("Flat-File Intel: $($file.Name)")
-                    $flatCount++
+                    if (-not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
+                    $domHash = [PSMathHelpers]::HashDomain($cleanVal)
+                    if ($domHash -ne 0 -and -not $MaliciousDomains.Contains($domHash)) {
+                        $MaliciousDomains.Add($domHash)
+                        $TiContext[$cleanVal] = "Flat-File Intel: $($file.Name)"
+                        $flatCount++
+                    }
                 }
             }
         } catch { Write-Diag "Failed to parse flat file: $($file.Name)" "WARN" }
     }
     Write-Diag "Flat-File Compilation: Injected $flatCount raw indicators into memory." "STARTUP"
     New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
-    Write-Diag "Threat Intel Compilation Complete. Passing $($TiKeys.Count) signatures to Memory." "STARTUP"
-    $TiKeys | Out-File "$LogDir\Compiled_ThreatIntel.txt"
-    return @{ Keys = $TiKeys.ToArray(); Titles = $TiTitles.ToArray() }
+    Write-Diag "Threat Intel Compilation Complete. Passing $(($MaliciousIps.Count + $MaliciousDomains.Count)) signatures to Memory." "STARTUP"
+    
+    # Sort arrays to enable O(log N) Binary Search in C#
+    $MaliciousIps.Sort()
+    $MaliciousDomains.Sort()
+
+    # Output the compiled signatures to disk for auditing
+    $TiContext.Keys | Out-File "$LogDir\Compiled_ThreatIntel.txt"
+
+    return @{ 
+        CompiledIps = $MaliciousIps.ToArray()
+        CompiledDomains = $MaliciousDomains.ToArray()
+        TiContext = $TiContext 
+    }
 }
 
 # ====================== 1. TRACEEVENT LIBRARY FETCH ======================
@@ -697,20 +720,39 @@ $global:TotalLateralFlows = 0
 
 Write-Diag "Starting Real-Time ETW Session | Trace initiated... Follow the white rabbit. The Matrix has you, Neo...." "STARTUP"
 
+$ConfigPath = Join-Path $ScriptDir "C2Sensor_Config.ini"
+$IniConfig = @{}
+
+if (Test-Path $ConfigPath) {
+    Write-Diag "Loading C2Sensor_Config.ini..." "STARTUP"
+    switch -Regex -File $ConfigPath {
+        "^([^#;\[][^=]+)=(.*)$" {
+            $key = $matches[1].Trim()
+            $values = $matches[2] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $IniConfig[$key] = [string[]]$values
+        }
+    }
+} else {
+    Write-Diag "CRITICAL: C2Sensor_Config.ini missing. Proceeding with empty exclusion arrays." "ERROR"
+}
+
 # --- FFI BOOTSTRAP ---
 $NetworkTI = Initialize-NetworkThreatIntel
 [RealTimeC2Sensor]::InitializeEngine(
     $ScriptDir, 
-    $DnsExclusions, 
-    $ProcessExclusions, 
-    $IpPrefixExclusions, 
-    $NetworkTI.Keys, 
-    $NetworkTI.Titles, 
-    $WebDaemons, 
-    $DbDaemons, 
-    $ShellInterpreters, 
-    $SuspiciousPaths
+    ($IniConfig["DnsExclusions"] -as [string[]]), 
+    ($IniConfig["ProcessExclusions"] -as [string[]]), 
+    ($IniConfig["IpExclusions"] -as [string[]]), 
+    $NetworkTI.CompiledIps,
+    $NetworkTI.CompiledDomains,
+    $NetworkTI.TiContext,
+    ($IniConfig["WebDaemons"] -as [string[]]), 
+    ($IniConfig["DbDaemons"] -as [string[]]), 
+    ($IniConfig["ShellInterpreters"] -as [string[]]), 
+    ($IniConfig["SuspiciousPaths"] -as [string[]])
 )
+
+Lockdown-ProjectDir
 [RealTimeC2Sensor]::StartSession()
 
 Write-Diag "Native FFI Bridge successfully initialized." "STARTUP"
@@ -1029,14 +1071,28 @@ try {
                 $props.ATTCKMappings.Add("TA0002: T1059")
             }
             if ($evt.Provider -eq "Microsoft-Windows-DNS-Client" -and $evt.Query) {
-                if ($evt.Query.Length -gt 10 -and $evt.Query -match '^[a-zA-Z0-9\-\.]+$') {
-                    $cleanQuery = $evt.Query.TrimEnd('.')
-                    if (Is-AnomalousDomain $cleanQuery) {
-                        $props.SuspiciousFlags.Add("DGA DNS Query Detected")
-                        $props.ATTCKMappings.Add("TA0011: T1568.002")
+                    $domain = $evt.Query.TrimEnd('.')
+                    $dLow = $domain.ToLower()
+                    
+                    # Telemetry Safety Bypass
+                    if ($dLow -notmatch "otel|telemetry|api|prod-") {
+                        
+                        # Length & Character Math
+                        $vowels = ([regex]::Matches($dLow, "[aeiou]")).Count
+                        $digits = ([regex]::Matches($domain, "\d")).Count
+                        $len = $domain.Length
+
+                        if ($len -gt 45 -or ($len -gt 0 -and ($digits / $len) -gt 0.45) -or ($len -gt 0 -and ($vowels / $len) -lt 0.10)) {
+                            
+                            $entropy = Get-Entropy $domain
+                            # Strict Entropy Gate
+                            if ($entropy -gt 4.5) {
+                                $sFlags += "DGA DNS Query Detected"
+                                $sMitre += "TA0011: T1568.002"
+                            }
+                        }
                     }
                 }
-            }
 
             if ($evt.Provider -match "TCPIP|Network" -and 
                 -not [string]::IsNullOrEmpty($evt.DestIp) -and 
@@ -1058,6 +1114,8 @@ try {
                         packet_sizes = [System.Collections.Generic.Queue[int]]::new()
                         domain = if ($evt.Query) { $evt.Query } else { $evt.DestIp }
                         image = $evt.Image
+                        total_out = 0
+                        total_in = 0
                     }
                 }
 
@@ -1075,6 +1133,8 @@ try {
 
                     if ($evt.Size -match '^\d+$' -and $evt.Size -ne "0") {
                         $flowMetadata[$key].packet_sizes.Enqueue([int]$evt.Size)
+                        if ($evt.EventName -match "Send") { $flowMetadata[$key].total_out += [int]$evt.Size }
+                        elseif ($evt.EventName -match "Recv") { $flowMetadata[$key].total_in += [int]$evt.Size }
                     } else {
                         $flowMetadata[$key].packet_sizes.Enqueue(0)
                     }
@@ -1106,8 +1166,6 @@ try {
             foreach ($key in $connectionHistory.Keys) {
                 $count = $connectionHistory[$key].Count
                 if ($count -ge $MinSamplesForML) {
-
-                    if (($now - $lastPingTime[$key]).TotalSeconds -gt 120) { continue }
 
                     if (-not $loggedFlows.ContainsKey($key) -or $loggedFlows[$key] -ne $count) {
                         $loggedFlows[$key] = $count
@@ -1146,12 +1204,17 @@ try {
                             if ($i -lt $sizeArr.Length) { $aligned_sizes.Add($sizeArr[$i]) }
                         }
 
+                        $asymmetry = if ($flowMetadata[$key].total_in -gt 0) { $flowMetadata[$key].total_out / $flowMetadata[$key].total_in } else { $flowMetadata[$key].total_out }
+                        $sparsity = if ($count -gt 0) { $duration / $count } else { 0 }
+
                         $payloadArray.Add(@{
                             key = $key
                             intervals = $intervals
                             domain = $flowMetadata[$key].domain
                             dst_ips = $aligned_ips
                             packet_sizes = $aligned_sizes
+                            asymmetry_ratio = $asymmetry
+                            sparsity_index = $sparsity
                         })
                     }
                 }
@@ -1205,10 +1268,11 @@ try {
             if (($now - $lastCleanupTime).TotalSeconds -ge 60) {
                 $staleKeys = [System.Collections.Generic.List[string]]::new()
 
-                # Check $lastPingTime instead of converting queues to arrays (O(1) memory instead of O(N))
-                foreach ($k in $lastPingTime.Keys) {
-                    if (($now - $lastPingTime[$k]).TotalSeconds -gt 300) { 
-                        $staleKeys.Add($k)
+                # Check GetEnumerator to grab Keys and Values simultaneously (O(1) memory, Zero double-lookups)
+                foreach ($kvp in $lastPingTime.GetEnumerator()) {
+                    # TUNE: 12-Hour APT Memory Window
+                    if (($now - $kvp.Value).TotalHours -gt 12) { 
+                        $staleKeys.Add($kvp.Key)
                     }
                 }
 
@@ -1221,32 +1285,11 @@ try {
                 $lastCleanupTime = $now
             }
 
-            # FLUSH DEDUPLICATED ALERTS TO HUD & JSONL
+            # FLUSH DEDUPLICATED ALERTS TO JSONL (HUD is now instant)
             foreach ($alert in $global:cycleAlerts.Values) {
                 $global:dataBatch.Add($alert)
-                $countTag = if ($alert.Count -gt 1) { " (x$($alert.Count))" } else { "" }
-
-                # Render to HUD
-                if ($alert.EventType -eq "JA3_C2_FINGERPRINT") {
-                    Add-AlertMessage "JA3 FINGERPRINT: $($alert.Image) -> $($alert.Destination)$countTag" $cRed
-                } elseif ($alert.Destination -eq "Local_Privilege_Escalation") {
-                    Add-AlertMessage "APPGUARD BLOCK: $($alert.Image) spawned $($alert.SuspiciousFlags)$countTag" $cRed
-                } elseif ($alert.EventType -eq "ML_Beacon") {
-                    Add-AlertMessage "ML ($($alert.Confidence)%): $($alert.SuspiciousFlags) ($($alert.Image))$countTag" $cRed
-                } else {
-                    Add-AlertMessage "STATIC: $($alert.SuspiciousFlags) ($($alert.Image))$countTag" $cWhite
-                }
-
-                # Trigger Active Defense once per clustered threat
-                if ($alert.Action -eq "Mitigated" -or $alert.Confidence -ge 90) {
-                    if ($alert.Destination -ne "Local_Privilege_Escalation" -and 
-                        $alert.EventType -ne "ThreatIntel_Match") {
-                        Invoke-ActiveDefense -ProcName $alert.Image -DestIp $alert.Destination -Confidence $alert.Confidence -Reason $alert.SuspiciousFlags
-                    }
-                }
             }
-
-            $global:cycleAlerts.Clear() # IMPORTANT: Empty the cache for the next 15-second cycle
+            $global:cycleAlerts.Clear() # Empty the cache for the next 15-second SIEM cycle
 
             $lastMLRunTime = $now
         }

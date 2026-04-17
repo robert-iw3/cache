@@ -24,10 +24,11 @@ namespace C2Console
         private static readonly Regex ValidIpRegex = new Regex(@"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", RegexOptions.Compiled);
         private static readonly Regex ValidDomainRegex = new Regex(@"^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        public static async Task<(string[] Keys, string[] Titles)> SyncAndCompileRules(string scriptDir)
+        public static async Task<(uint[] Ips, ulong[] Domains, Dictionary<string, string> Context)> SyncAndCompileRules(string scriptDir)
         {
-            List<string> tiKeys = new List<string>();
-            List<string> tiTitles = new List<string>();
+            var maliciousIps = new List<uint>();
+            var maliciousDomains = new List<ulong>();
+            var tiContext = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             
             string cacheMarker = Path.Combine(scriptDir, "threatintel.cache");
             string suricataDir = Path.Combine(scriptDir, "suricata", "upstream");
@@ -65,9 +66,12 @@ namespace C2Console
                         {
                             if (ValidIpRegex.IsMatch(ip) && Array.IndexOf(NoisyIps, ip) == -1)
                             {
-                                tiKeys.Add(ip);
-                                tiTitles.Add(msg);
-                                suricataCount++;
+                                uint ipInt = MathHelpers.IpToUint(ip);
+                                if (ipInt != 0 && !maliciousIps.Contains(ipInt)) {
+                                    maliciousIps.Add(ipInt);
+                                    tiContext[ip] = msg;
+                                    suricataCount++;
+                                }
                             }
                         }
                     }
@@ -84,21 +88,32 @@ namespace C2Console
                         bool isIp = ValidIpRegex.IsMatch(val);
                         bool isDomain = ValidDomainRegex.IsMatch(val);
 
-                        if (isIp || isDomain)
-                        {
-                            string cleanVal = isDomain && !val.StartsWith(".") ? "." + val : val;
-                            tiKeys.Add(cleanVal);
-                            tiTitles.Add(msg);
-                            suricataCount++;
+                        if (isIp) {
+                            uint ipInt = MathHelpers.IpToUint(val);
+                            if (ipInt != 0 && !maliciousIps.Contains(ipInt)) {
+                                maliciousIps.Add(ipInt);
+                                tiContext[val] = msg;
+                                suricataCount++;
+                            }
+                        } else if (isDomain) {
+                            string cleanVal = !val.StartsWith(".") ? "." + val : val;
+                            ulong domHash = MathHelpers.HashDomain(cleanVal);
+                            if (domHash != 0 && !maliciousDomains.Contains(domHash)) {
+                                maliciousDomains.Add(domHash);
+                                tiContext[cleanVal] = msg;
+                                suricataCount++;
+                            }
                         }
                     }
                 }
             }
 
             Program.WriteDiag($"Gatekeeper Compilation: Parsed {suricataCount} signatures from Suricata.", "STARTUP");
-            Program.WriteDiag($"Threat Intel Compilation Complete. Passing {tiKeys.Count} signatures to Memory.", "STARTUP");
+            Program.WriteDiag($"Threat Intel Compilation Complete. Passing {suricataCount} signatures to Memory.", "STARTUP");
             
-            return (tiKeys.ToArray(), tiTitles.ToArray());
+            maliciousIps.Sort();
+            maliciousDomains.Sort();
+            return (maliciousIps.ToArray(), maliciousDomains.ToArray(), tiContext);
         }
 
         private static bool IsSafeDomain(string val)

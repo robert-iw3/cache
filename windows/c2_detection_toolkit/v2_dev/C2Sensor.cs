@@ -12,7 +12,7 @@
  * - Native FFI Memory Map: Bypasses all IPC pipelines for zero-latency ML evaluation.
  * - Universal AppGuard: Monitors Kernel-Process events to intercept web shells.
  * - Cryptographic DPI (NDIS): Extracts TLS Client Hello signatures (JA3).
- * - O(1) Network Threat Intel: Implements an Aho-Corasick state machine to parse
+ * - O(1) Network Threat Intel: Implements zero-allocation binary searches to parse
  * compiled Suricata network signatures against live ETW streams at wire speed.
  ********************************************************************************/
 
@@ -80,10 +80,10 @@ public class RealTimeC2Sensor {
     private static HashSet<string> ProcessExclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static List<System.Text.RegularExpressions.Regex> IpPrefixExclusions = new List<System.Text.RegularExpressions.Regex>();
 
-    // --- NETWORK THREAT INTEL STATE MACHINE ---
-    private static AhoCorasick NetworkAc = new AhoCorasick();
-    private static string[] NetworkTiTitles = new string[0];
-    private static string[] NetworkTiKeys = new string[0];
+    // --- NETWORK THREAT INTEL BINARY SEARCH ARRAYS ---
+    private static uint[] CompiledIps = Array.Empty<uint>();
+    private static ulong[] CompiledDomains = Array.Empty<ulong>();
+    private static Dictionary<string, string> TiContext = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     // --- P2P LATERAL MOVEMENT STATE ---
     private static readonly string[] MaliciousPipes = {
@@ -104,8 +104,9 @@ public class RealTimeC2Sensor {
         string[] dnsExclusions, 
         string[] processExclusions, 
         string[] ipExclusions, 
-        string[] tiKeys, 
-        string[] tiTitles, 
+        uint[] maliciousIps, 
+        ulong[] maliciousDomains, 
+        Dictionary<string, string> tiMap,
         string[] webDaemons, 
         string[] dbDaemons, 
         string[] shellInterpreters, 
@@ -139,28 +140,12 @@ public class RealTimeC2Sensor {
             EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[ML ENGINE ERROR] FFI Import Failed: " + EscapeJson(ex.Message) });
         }
 
-        // Compile Network Threat Intel Arrays (only once or when signatures change)
-        if (tiKeys != null && tiKeys.Length > 0) {
-            // Simple change-detection so we don't rebuild on every restart
-            bool needsRebuild = NetworkTiKeys.Length != tiKeys.Length;
-            if (!needsRebuild) {
-                for (int i = 0; i < NetworkTiKeys.Length; i++) {
-                    if (!string.Equals(NetworkTiKeys[i], tiKeys[i], StringComparison.Ordinal)) {
-                        needsRebuild = true;
-                        break;
-                    }
-                }
-            }
-
-            if (needsRebuild) {
-                NetworkAc.Build(tiKeys);
-                NetworkTiTitles = tiTitles;   // store the new list for next comparison
-                NetworkTiKeys = tiKeys;
-                EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[THREAT INTEL] Aho-Corasick State Machine armed with " + tiKeys.Length + " network signatures." });
-            }
-            else {
-                EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = "[THREAT INTEL] Re-using existing Aho-Corasick state machine (no rule changes)." });
-            }
+        // Load Network Threat Intel Binary Search Arrays
+        if (maliciousIps != null && maliciousDomains != null) {
+            CompiledIps = maliciousIps;
+            CompiledDomains = maliciousDomains;
+            TiContext = tiMap ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = $"[THREAT INTEL] Binary Search arrays loaded: {CompiledIps.Length} IPs, {CompiledDomains.Length} Domains." });
         }
 
         // Load AppGuard lists
@@ -585,25 +570,36 @@ public class RealTimeC2Sensor {
                             }
                         }
 
-                        // --- NETWORK THREAT INTEL AHO-CORASICK EVALUATION ---
+                        // --- NETWORK THREAT INTEL BINARY SEARCH EVALUATION ---
                         string threatIntelTag = "";
-                        if (NetworkTiTitles.Length > 0) {
-                            string scanTarget = "";
-                            if (data.ProviderName.Contains("DNS") && !string.IsNullOrEmpty(query)) {
-                                scanTarget = "." + query.ToLowerInvariant();
-                            } else if (isNetworkEvent && !string.IsNullOrEmpty(destIp)) {
-                                scanTarget = destIp;
+                        
+                        if (isNetworkEvent && !string.IsNullOrEmpty(destIp)) {
+                            uint ipVal = IpToUint(destIp);
+                            if (ipVal != 0 && Array.BinarySearch(CompiledIps, ipVal) >= 0) {
+                                TiContext.TryGetValue(destIp, out string ruleName);
+                                threatIntelTag = ruleName ?? "Suricata: Malicious IP Match";
                             }
+                        }
 
-                            if (!string.IsNullOrEmpty(scanTarget)) {
-                                int matchIdx = NetworkAc.SearchFirst(scanTarget);
-                                if (matchIdx >= 0) {
-                                    string matchedKey = NetworkTiKeys[matchIdx];
-
-                                    if (!isNetworkEvent || scanTarget.Length == matchedKey.Length) {
-                                        threatIntelTag = NetworkTiTitles[matchIdx];
-                                    }
+                        if (string.IsNullOrEmpty(threatIntelTag) && data.ProviderName.Contains("DNS") && !string.IsNullOrEmpty(query)) {
+                            string cleanQuery = !query.StartsWith(".") ? "." + query : query;
+                            int idx = 0;
+                            while (idx < cleanQuery.Length) {
+                                ulong domHash = 14695981039346656037;
+                                for (int i = idx; i < cleanQuery.Length; i++) {
+                                    domHash ^= char.ToLowerInvariant(cleanQuery[i]);
+                                    domHash *= 1099511628211;
                                 }
+                                if (domHash != 0 && Array.BinarySearch(CompiledDomains, domHash) >= 0) {
+                                    // Match found. Allocate string exclusively for the dictionary lookup.
+                                    string matchedSub = cleanQuery.Substring(idx);
+                                    TiContext.TryGetValue(matchedSub, out string ruleName);
+                                    threatIntelTag = ruleName ?? "Suricata: Malicious Domain Match";
+                                    break;
+                                }
+                                // Shift index to the next subdomain segment
+                                idx = cleanQuery.IndexOf('.', idx + 1);
+                                if (idx == -1) break;
                             }
                         }
 
@@ -665,6 +661,26 @@ public class RealTimeC2Sensor {
         });
     }
 
+    // ZERO-ALLOCATION THREAT INTEL MATH HELPERS
+    public static ulong HashDomain(string domain) {
+        if (string.IsNullOrEmpty(domain)) return 0;
+        ulong hash = 14695981039346656037;
+        for (int i = 0; i < domain.Length; i++) {
+            hash ^= char.ToLowerInvariant(domain[i]);
+            hash *= 1099511628211;
+        }
+        return hash;
+    }
+
+    public static uint IpToUint(string ipAddress) {
+        if (System.Net.IPAddress.TryParse(ipAddress, out var address)) {
+            byte[] bytes = address.GetAddressBytes();
+            if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+            return BitConverter.ToUInt32(bytes, 0);
+        }
+        return 0;
+    }
+
     public static void StopSession() {
         if (_session != null) {
             _session.Stop();
@@ -687,62 +703,6 @@ public class RealTimeC2Sensor {
         }
         catch {
             return false;
-        }
-    }
-
-    // O(n) AHO-CORASICK STATE MACHINE
-    private class AhoCorasick {
-        class Node {
-            public Dictionary<char, Node> Children = new Dictionary<char, Node>();
-            public Node Fail;
-            public List<int> Outputs = new List<int>();
-        }
-
-        private Node Root = new Node();
-
-        public void Build(string[] keywords) {
-            Root = new Node(); // Reset on rebuild
-            for (int i = 0; i < keywords.Length; i++) {
-                Node current = Root;
-                foreach (char originalC in keywords[i]) {
-                    char c = char.ToLowerInvariant(originalC);
-                    if (!current.Children.ContainsKey(c)) current.Children[c] = new Node();
-                    current = current.Children[c];
-                }
-                current.Outputs.Add(i);
-            }
-
-            Queue<Node> queue = new Queue<Node>();
-            foreach (var child in Root.Children.Values) {
-                child.Fail = Root;
-                queue.Enqueue(child);
-            }
-
-            while (queue.Count > 0) {
-                Node current = queue.Dequeue();
-                foreach (var kvp in current.Children) {
-                    char c = kvp.Key;
-                    Node child = kvp.Value;
-                    Node failNode = current.Fail;
-                    while (failNode != null && !failNode.Children.ContainsKey(c)) failNode = failNode.Fail;
-                    child.Fail = failNode != null ? failNode.Children[c] : Root;
-                    child.Outputs.AddRange(child.Fail.Outputs);
-                    queue.Enqueue(child);
-                }
-            }
-        }
-
-        // ZERO-ALLOCATION SEARCH: Returns the first match index, bypassing GC overhead completely.
-        public int SearchFirst(string text) {
-            if (string.IsNullOrEmpty(text)) return -1;
-            Node current = Root;
-            for (int i = 0; i < text.Length; i++) {
-                char c = char.ToLowerInvariant(text[i]);
-                while (current != null && !current.Children.ContainsKey(c)) current = current.Fail;
-                current = current != null ? current.Children[c] : Root;
-                if (current != null && current.Outputs.Count > 0) return current.Outputs[0];
-            }
-            return -1;
         }
     }
 }

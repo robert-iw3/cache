@@ -1,11 +1,13 @@
 /*=============================================================================================
- * SYSTEM:          C2 Beacon Sensor v1
+ * SYSTEM:          C2 Beacon Sensor v2
  * COMPONENT:       lib.rs (Native FFI Behavioral ML Engine)
  * AUTHOR:          Robert Weber
  * DESCRIPTION:
  * Compiled as a C-compatible Dynamic Link Library (cdylib). Replaces the legacy Python
- * STDIN/STDOUT daemon. Achieves 100% mathematical parity with V6, natively executing
- * DBSCAN, 4D K-Means, Fast-Flux, and DGA heuristics via the C-ABI boundary.
+ * STDIN/STDOUT daemon. Upgraded to the v2 architecture to detect advanced persistent 
+ * threats (APTs). Natively executes 3rd-moment statistical math (Skewness), Coefficient 
+ * of Variation (CV), Data Asymmetry, and Sparsity Index alongside 4D K-Means, DBSCAN, 
+ * Fast-Flux, and DGA heuristics via the high-speed C-ABI boundary.
  *============================================================================================*/
 
 use rusqlite::{Connection, params};
@@ -46,6 +48,8 @@ pub struct IncomingTelemetry {
     pub ttls: Option<Vec<i32>>,
     pub asns: Option<Vec<i32>>,
     pub payload_entropies: Option<Vec<f64>>,
+    pub asymmetry_ratio: Option<f64>,
+    pub sparsity_index: Option<f64>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -182,6 +186,13 @@ impl MathEngine {
             diff * diff
         }).sum::<f64>() / data.len() as f64;
         (mean, variance.sqrt())
+    }
+
+    pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> f64 {
+        if data.len() < 3 || std_dev == 0.0 { return 0.0; }
+        let n = data.len() as f64;
+        let sum_cubes: f64 = data.iter().map(|&x| (x - mean).powi(3)).sum();
+        (n / ((n - 1.0) * (n - 2.0))) * (sum_cubes / std_dev.powi(3))
     }
 
     pub fn standard_scaler(matrix: &mut Array2<f64>) {
@@ -374,15 +385,62 @@ impl BehavioralEngine {
         if n_intervals < 8 { return None; }
 
         let mut flags = Vec::new();
-        let (mean_int, std_int) = MathEngine::calculate_mean_std(&flow.intervals);
         let observed_duration: f64 = flow.intervals.iter().sum();
+        
+        let (mean_int, std_int) = MathEngine::calculate_mean_std(&flow.intervals);
+        let cv_interval = if mean_int > 0.0 { std_int / mean_int } else { 0.0 };
 
-        // 1. Base Jitter Heuristic
-        if std_int < 1.5_f64.max(0.3 * mean_int) {
-            if observed_duration > 180.0 {
-                flags.push(format!("ML Sustained Beaconing (Jittered: {:.2}s ±{:.2})", mean_int, std_int));
+        let (mean_size, std_size) = MathEngine::calculate_mean_std(&flow.packet_sizes);
+        let cv_size = if mean_size > 0.0 { std_size / mean_size } else { 0.0 };
+
+        let mut apt_score_multiplier = 0.0;
+
+        // 1. Advanced Jitter Heuristic (Coefficient of Variation)
+        // APTs usually cap jitter at 30%. A CV < 0.35 is highly programmatic.
+        if cv_interval < 0.35 && n_intervals >= 8 {
+            if mean_int > 3600.0 { // Over 1 hour
+                flags.push(format!("APT Ultra-Stealth Long-Haul (Jitter CV: {:.2}, Mean: {:.0}s)", cv_interval, mean_int));
+                apt_score_multiplier += 40.0;
+            } else if mean_int > 300.0 { // Over 5 minutes
+                flags.push(format!("APT Low-and-Slow Beacon (Jitter CV: {:.2}, Mean: {:.0}s)", cv_interval, mean_int));
+                apt_score_multiplier += 25.0;
             } else {
-                flags.push(format!("ML Short-Burst Beaconing (Jittered: {:.2}s ±{:.2})", mean_int, std_int));
+                flags.push(format!("Programmatic Jitter (CV: {:.2}, Mean: {:.0}s)", cv_interval, mean_int));
+                apt_score_multiplier += 10.0;
+            }
+        }
+
+        // 1.5. Rigid Heartbeat Heuristic (Packet Size Consistency)
+        // Normal web traffic varies. C2 encrypted heartbeats are identical in byte size.
+        if cv_size < 0.15 && mean_size < 1500.0 && n_intervals >= 8 {
+            flags.push(format!("Rigid C2 Heartbeat (Size CV: {:.2}, Mean: {:.0}B)", cv_size, mean_size));
+            apt_score_multiplier += 20.0;
+        }
+
+        let skewness = MathEngine::calculate_skewness(&flow.intervals, mean_int, std_int);
+
+        // 1.75. Advanced Evasion: Artificial Jitter (Skewness)
+        // Highly engineered Gamma-distributed jitter lacks the natural skew of organic human traffic.
+        if skewness.abs() < 0.5 && std_int > 2.0 && n_intervals >= 8 {
+            flags.push(format!("Artificial Jitter Distribution (Skewness: {:.2})", skewness));
+            apt_score_multiplier += 30.0;
+        }
+
+        // 1.8. Low-and-Slow Data Exfiltration
+        // Flags persistent connections that are massively skewed toward uploads.
+        if let Some(asym) = flow.asymmetry_ratio {
+            if asym > 10.0 && observed_duration > 600.0 {
+                flags.push(format!("Low-and-Slow Exfiltration (Asymmetry: {:.1}x)", asym));
+                apt_score_multiplier += 40.0;
+            }
+        }
+
+        // 1.9. Long-Polling / Dormant WebSockets
+        // Catches C2 sockets held open indefinitely with minimal packet transfer.
+        if let Some(sparsity) = flow.sparsity_index {
+            if sparsity > 300.0 && n_intervals < 15 && observed_duration > 3600.0 {
+                flags.push(format!("Dormant C2 Socket (Sparsity: {:.0}s/pkt)", sparsity));
+                apt_score_multiplier += 45.0;
             }
         }
 
@@ -514,8 +572,8 @@ impl BehavioralEngine {
 
         if flags.is_empty() { return None; }
 
-        // Confidence Math
-        let mut base_conf = 45.0;
+        // Confidence Math: Start lower to punish noise, but scale aggressively for APT traits
+        let mut base_conf = 35.0 + apt_score_multiplier;
         if observed_duration < 180.0 && std_int > 2.0 { base_conf -= 15.0; }
 
         let mut confidence = base_conf + (flags.len() as f64 * 20.0) + (flux_score * 0.45) + (dga_score * 0.35);
@@ -631,8 +689,21 @@ pub extern "C" fn evaluate_telemetry(engine_ptr: *mut Mutex<BehavioralEngine>, j
     });
 
     match result {
-        Ok(alerts) if !alerts.is_empty() => {
-            let response = OutgoingResponse { alerts: Some(alerts), daemon_error: None };
+        Ok(mut alerts) if !alerts.is_empty() => {
+            // Drop everything below 90% confidence.
+            alerts.retain(|a| a.confidence >= 90.0);
+
+            if alerts.is_empty() {
+                let empty_response = OutgoingResponse { alerts: Some(vec![]), daemon_error: None };
+                let s = serde_json::to_string(&empty_response).unwrap_or_else(|_| "{}".to_string());
+                return CString::new(s).unwrap().into_raw();
+            }
+
+            let response = OutgoingResponse {
+                alerts: Some(alerts),
+                daemon_error: None,
+            };
+
             match serde_json::to_string(&response) {
                 Ok(resp_str) => {
                     // Strip ETW null-byte poisoning before crossing the C-ABI
