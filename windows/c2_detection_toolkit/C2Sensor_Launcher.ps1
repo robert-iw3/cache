@@ -421,7 +421,12 @@ if ($global:MaliciousJA3Cache.Count -eq 0) {
         "18f152d0b50302ffab23fc47545de999", # IcedID
         "3f4b4ce6edbc8537fc2ea22a009fb74d", # Qakbot
         "c45d36e2fde376eec6a382b6c31e67b2", # Brute Ratel C4 (Default Config)
-        "518b7eb09de4e10173bc51c1ff76b2c2"  # Dridex
+        "518b7eb09de4e10173bc51c1ff76b2c2", # Dridex
+        "e7d705a3286e19ea42f587b344ee6865", # Malicious C2 Profile
+        "4d7a28d5f652494751259342149a1222", # Malicious C2 Profile
+        "6734f37431670b3ab4292b8f60f29984", # Malicious C2 Profile
+        "6268c6b7a55651e83568134465714412", # Malicious C2 Profile
+        "e20c5952f6424433577a639ab2459f83"  # Malicious C2 Profile
     )
     foreach ($hash in $offlineDefaults) { [void]$global:MaliciousJA3Cache.Add($hash) }
     Write-Diag "Loaded $($global:MaliciousJA3Cache.Count) default offline JA3 signatures." "STARTUP"
@@ -541,6 +546,36 @@ function Initialize-NetworkThreatIntel {
         } catch { Write-Diag "Failed to parse custom rule file: $($file.Name)" "WARN" }
     }
     Write-Diag "Gatekeeper Compilation: Parsed $suricataCount signatures from Suricata." "STARTUP"
+
+    # 2. FLAT-FILE IP & DOMAIN INGESTION (.txt, .list)
+    $FlatFiles = Get-ChildItem -Path $SuricataBaseDir -Include "*.txt", "*.list" -Recurse
+    $flatCount = 0
+
+    foreach ($file in $FlatFiles) {
+        try {
+            $lines = Get-Content $file.FullName
+            foreach ($line in $lines) {
+                # Strip inline comments and trim whitespace
+                $entry = ($line -split '#')[0].Trim()
+                if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+
+                # Gatekeeper check: Only inject valid IPv4 or Domains
+                $isIp = $entry -match "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+                $isDomain = $entry -match "^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$"
+
+                if ($isIp -or $isDomain) {
+                    $cleanVal = $entry
+                    # Pre-pend a dot to domains to match how DNS queries are handled in C2Sensor.cs
+                    if ($isDomain -and -not $cleanVal.StartsWith(".")) { $cleanVal = ".$cleanVal" }
+
+                    $TiKeys.Add($cleanVal)
+                    $TiTitles.Add("Flat-File Intel: $($file.Name)")
+                    $flatCount++
+                }
+            }
+        } catch { Write-Diag "Failed to parse flat file: $($file.Name)" "WARN" }
+    }
+    Write-Diag "Flat-File Compilation: Injected $flatCount raw indicators into memory." "STARTUP"
     New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
     Write-Diag "Threat Intel Compilation Complete. Passing $($TiKeys.Count) signatures to Memory." "STARTUP"
     $TiKeys | Out-File "$LogDir\Compiled_ThreatIntel.txt"
