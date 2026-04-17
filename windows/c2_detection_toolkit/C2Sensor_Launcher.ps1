@@ -240,7 +240,7 @@ $global:StartupLogs = [System.Collections.Generic.List[string]]::new()
 function Write-Diag {
     param(
         [string]$Message,
-        [ValidateSet("INFO", "WARN", "ERROR", "FFI-TX", "FFI-RX", "MATH", "STARTUP", "CRITICAL")]
+        [ValidateSet("INFO", "WARN", "ERROR", "FFI-TX", "FFI-RX", "MATH", "STARTUP", "CRITICAL", "C#-ENGINE")]
         [string]$Level = "INFO"
     )
     if (-not $global:EnableDiagnostics -and $Level -notin @("ERROR", "WARN", "CRITICAL", "STARTUP")) { return }
@@ -325,6 +325,18 @@ function Initialize-TamperGuard {
     }
 }
 Initialize-TamperGuard
+
+function Lock-SecureDirectory([string]$Path) {
+    if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+    
+    $acl = Get-Acl $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    $sysRule = New-Object System.Security.AccessControl.FileSystemAccessRule("NT AUTHORITY\SYSTEM", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("BUILTIN\Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $acl.AddAccessRule($sysRule)
+    $acl.AddAccessRule($adminRule)
+    Set-Acl -Path $Path -AclObject $acl
+}
 
 function Lockdown-ProjectDir {
     # Complete Directory Anti-Tamper Lockdown
@@ -625,7 +637,7 @@ function Initialize-NetworkThreatIntel {
     }
 }
 
-# ====================== 1. TRACEEVENT LIBRARY FETCH ======================
+# ====================== TRACEEVENT LIBRARY FETCH ======================
 Write-Diag "Initializing C# TraceEvent Engine..." "STARTUP"
 
 $DependenciesDir = "C:\ProgramData\C2Sensor\Dependencies"
@@ -656,126 +668,6 @@ if (-not (Test-Path $ManagedDllPath)) {
 Get-ChildItem -Path $ExtractPath -Recurse | Unblock-File
 [System.Reflection.Assembly]::LoadFrom($ManagedDllPath) | Out-Null
 Write-Diag "TraceEvent Library Loaded ($DotNetTarget)." "STARTUP"
-
-# ====================== CROSS-PLATFORM COMPILER ======================
-$RefAssemblies = @(
-    $ManagedDllPath,
-    "System",
-    "System.Core"
-)
-
-if ($PSVersionTable.PSVersion.Major -ge 7) {
-    # Rely on Add-Type's internal resolver by providing simple assembly names.
-    # Added Net.Primitives, Security.Cryptography, and Linq.Expressions as demanded by Roslyn.
-    $RefAssemblies += @(
-        "System.Runtime",
-        "System.Collections",
-        "System.Collections.Concurrent",
-        "System.ObjectModel",
-        "System.Security.Cryptography",
-        "System.Security.Cryptography.Algorithms",
-        "System.Security.Cryptography.Primitives",
-        "System.Net.Primitives",
-        "System.Linq.Expressions",
-        "System.Private.CoreLib",
-        "netstandard",
-        "System.Text.RegularExpressions"
-    )
-}
-
-$CSharpFilePath = Join-Path $ScriptDir "C2Sensor.cs"
-if (-not (Test-Path $CSharpFilePath)) {
-    Write-Diag "FATAL: Missing C# Engine Source: $CSharpFilePath" "CRITICAL"
-    exit
-}
-
-Add-Type -Path $CSharpFilePath -ReferencedAssemblies $RefAssemblies
-Write-Diag "C# Engine Compiled Natively into runspace." "STARTUP"
-
-# ====================== 4. RUNTIME STRUCTURES ======================
-
-# Thread-safe Process and Connection Tracking
-$ProcessCache      = [System.Collections.Concurrent.ConcurrentDictionary[int, string]]::new()
-$connectionHistory = [System.Collections.Concurrent.ConcurrentDictionary[string, System.Collections.Generic.Queue[datetime]]]::new()
-$flowMetadata      = [System.Collections.Concurrent.ConcurrentDictionary[string, hashtable]]::new()
-
-$global:TotalMitigations = 0
-$global:globalMlSent = 0
-$global:globalMlRcvd = 0
-$global:globalMlAlerts = 0
-$lastPingTime = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
-$OutboundNetEvents = 0
-
-# High-Speed Batching Lists (Globalized for Submit-SensorAlert access)
-$global:uebaBatch = [System.Collections.Generic.List[string]]::new()
-$global:dataBatch = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-# Unified Deduplication Cache (Globalized to prevent null-expression crash)
-$global:cycleAlerts = [System.Collections.Generic.Dictionary[string, object]]::new()
-
-# Metrics Consolidation
-$global:SensorStats = [PSCustomObject]@{
-    MlSent      = 0
-    MlRcvd      = 0
-    Evaluated   = 0
-    Alerts      = 0
-    Mitigations = 0
-    BootTime    = Get-Date
-}
-
-$dashboardDirty = $true
-$lastMLRunTime = Get-Date
-$lastCleanupTime = Get-Date
-$lastLightGC = Get-Date
-$lastUebaCleanup = Get-Date
-$loggedFlows   = [System.Collections.Concurrent.ConcurrentDictionary[string, int]]::new()
-$SensorBlinded = $false
-$LastEventReceived = Get-Date
-$global:RecentAlerts = [System.Collections.Generic.List[PSCustomObject]]::new()
-$LateralTrack = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
-$EgressTrack  = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
-$global:TotalLateralFlows = 0
-
-# ============================================================== End
-
-Write-Diag "Starting Real-Time ETW Session | Trace initiated... Follow the white rabbit. The Matrix has you, Neo...." "STARTUP"
-
-$ConfigPath = Join-Path $ScriptDir "C2Sensor_Config.ini"
-$IniConfig = @{}
-
-if (Test-Path $ConfigPath) {
-    Write-Diag "Loading C2Sensor_Config.ini..." "STARTUP"
-    switch -Regex -File $ConfigPath {
-        "^([^#;\[][^=]+)=(.*)$" {
-            $key = $matches[1].Trim()
-            $values = $matches[2] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-            $IniConfig[$key] = [string[]]$values
-        }
-    }
-} else {
-    Write-Diag "CRITICAL: C2Sensor_Config.ini missing. Proceeding with empty exclusion arrays." "ERROR"
-}
-
-# --- FFI BOOTSTRAP ---
-$NetworkTI = Initialize-NetworkThreatIntel
-[RealTimeC2Sensor]::InitializeEngine(
-    $ScriptDir, 
-    ($IniConfig["DnsExclusions"] -as [string[]]), 
-    ($IniConfig["ProcessExclusions"] -as [string[]]), 
-    ($IniConfig["IpExclusions"] -as [string[]]), 
-    $NetworkTI.CompiledIps,
-    $NetworkTI.CompiledDomains,
-    $NetworkTI.TiContext,
-    ($IniConfig["WebDaemons"] -as [string[]]), 
-    ($IniConfig["DbDaemons"] -as [string[]]), 
-    ($IniConfig["ShellInterpreters"] -as [string[]]), 
-    ($IniConfig["SuspiciousPaths"] -as [string[]])
-)
-
-Lockdown-ProjectDir
-[RealTimeC2Sensor]::StartSession()
-
-Write-Diag "Native FFI Bridge successfully initialized." "STARTUP"
 
 # ====================== ACTIVE DEFENSE ENGINE ======================
 function Invoke-ActiveDefense($ProcName, $DestIp, $Confidence, $Reason) {
@@ -934,6 +826,158 @@ function Is-AnomalousDomain([string]$domain) {
     return (Get-Entropy $domain) -gt 3.8
 }
 
+# ====================== CROSS-PLATFORM COMPILER ======================
+$RefAssemblies = @(
+    $ManagedDllPath,
+    "System",
+    "System.Core"
+)
+
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    # Rely on Add-Type's internal resolver by providing simple assembly names.
+    # Added Net.Primitives, Security.Cryptography, and Linq.Expressions as demanded by Roslyn.
+    $RefAssemblies += @(
+        "System.Runtime",
+        "System.Collections",
+        "System.Collections.Concurrent",
+        "System.ObjectModel",
+        "System.Security.Cryptography",
+        "System.Security.Cryptography.Algorithms",
+        "System.Security.Cryptography.Primitives",
+        "System.Net.Primitives",
+        "System.Linq.Expressions",
+        "System.Private.CoreLib",
+        "netstandard",
+        "System.Text.RegularExpressions"
+    )
+}
+
+$CSharpFilePath = Join-Path $ScriptDir "C2Sensor.cs"
+if (-not (Test-Path $CSharpFilePath)) {
+    Write-Diag "FATAL: Missing C# Engine Source: $CSharpFilePath" "CRITICAL"
+    exit
+}
+
+Add-Type -Path $CSharpFilePath -ReferencedAssemblies $RefAssemblies
+Write-Diag "C# Engine Compiled Natively into runspace." "STARTUP"
+
+# ====================== RUNTIME STRUCTURES ======================
+
+# Thread-safe Process and Connection Tracking
+$ProcessCache      = [System.Collections.Concurrent.ConcurrentDictionary[int, string]]::new()
+$connectionHistory = [System.Collections.Concurrent.ConcurrentDictionary[string, System.Collections.Generic.Queue[datetime]]]::new()
+$flowMetadata      = [System.Collections.Concurrent.ConcurrentDictionary[string, hashtable]]::new()
+
+$global:TotalMitigations = 0
+$global:globalMlSent = 0
+$global:globalMlRcvd = 0
+$global:globalMlAlerts = 0
+$lastPingTime = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
+$OutboundNetEvents = 0
+
+# High-Speed Batching Lists (Globalized for Submit-SensorAlert access)
+$global:uebaBatch = [System.Collections.Generic.List[string]]::new()
+$global:dataBatch = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+# Unified Deduplication Cache (Globalized to prevent null-expression crash)
+$global:cycleAlerts = [System.Collections.Generic.Dictionary[string, object]]::new()
+
+# Metrics Consolidation
+$global:SensorStats = [PSCustomObject]@{
+    MlSent      = 0
+    MlRcvd      = 0
+    Evaluated   = 0
+    Alerts      = 0
+    Mitigations = 0
+    BootTime    = Get-Date
+}
+
+$dashboardDirty = $true
+$lastMLRunTime = Get-Date
+$lastCleanupTime = Get-Date
+$lastLightGC = Get-Date
+$lastUebaCleanup = Get-Date
+$loggedFlows   = [System.Collections.Concurrent.ConcurrentDictionary[string, int]]::new()
+$SensorBlinded = $false
+$LastEventReceived = Get-Date
+$global:RecentAlerts = [System.Collections.Generic.List[PSCustomObject]]::new()
+$LateralTrack = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
+$EgressTrack  = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
+$global:TotalLateralFlows = 0
+
+# ============================================================== End
+
+Write-Diag "Starting Real-Time ETW Session | Trace initiated... Follow the white rabbit. The Matrix has you, Neo...." "STARTUP"
+
+$ConfigPath = Join-Path $ScriptDir "C2Sensor_Config.ini"
+$IniConfig = @{}
+
+if (Test-Path $ConfigPath) {
+    Write-Diag "Loading C2Sensor_Config.ini..." "STARTUP"
+    switch -Regex -File $ConfigPath {
+        "^([^#;\[][^=]+)=(.*)$" {
+            $key = $matches[1].Trim()
+            $values = $matches[2] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $IniConfig[$key] = [string[]]$values
+        }
+    }
+} else {
+    Write-Diag "CRITICAL: C2Sensor_Config.ini missing. Proceeding with empty exclusion arrays." "ERROR"
+}
+
+# =================================================================================
+# --- FFI BOOTSTRAP ---
+$NetworkTI = Initialize-NetworkThreatIntel
+
+# 1. Create and lock the secure execution paths
+$BinPath  = "C:\ProgramData\C2Sensor\Bin"
+$DataPath = "C:\ProgramData\C2Sensor\Data"
+Lock-SecureDirectory $BinPath
+Lock-SecureDirectory $DataPath
+Lockdown-ProjectDir
+
+# 2. FFI Integrity Check and Relocation
+$dllSrc = Join-Path $ScriptDir "c2sensor_ml.dll"
+$hashSrc = Join-Path $ScriptDir "c2sensor_ml.sha256"
+$dllDest = Join-Path $BinPath "c2sensor_ml.dll"
+
+if ((Test-Path $dllSrc) -and (Test-Path $hashSrc)) {
+    Write-Diag "Verifying FFI Engine cryptographic integrity..." "STARTUP"
+    $expectedHash = (Get-Content $hashSrc -Raw).Trim()
+    $actualHash = (Get-FileHash $dllSrc -Algorithm SHA256).Hash
+    
+    if ($expectedHash -ne $actualHash) {
+        Write-Diag "FATAL PIPELINE ERROR: c2sensor_ml.dll SHA256 Integrity Check Failed!" "CRITICAL"
+        throw "FATAL: c2sensor_ml.dll has been tampered with."
+    }
+    
+    Move-Item -Path $dllSrc -Destination $dllDest -Force
+    Move-Item -Path $hashSrc -Destination (Join-Path $BinPath "c2sensor_ml.sha256") -Force
+    Write-Diag "FFI DLL (SHA256: $actualHash) integrity verified and locked in \Bin." "STARTUP"
+} elseif (-not (Test-Path $dllDest)) {
+    Write-Diag "FATAL: c2sensor_ml.dll not found in project root or secure \Bin." "CRITICAL"
+    throw "FATAL: c2sensor_ml.dll missing."
+}
+
+# 3. Boot the C# Engine (which now securely pulls from \Bin)
+[RealTimeC2Sensor]::InitializeEngine(
+    $ScriptDir, 
+    ($IniConfig["DnsExclusions"] -as [string[]]), 
+    ($IniConfig["ProcessExclusions"] -as [string[]]), 
+    ($IniConfig["IpExclusions"] -as [string[]]), 
+    $NetworkTI.CompiledIps,
+    $NetworkTI.CompiledDomains,
+    $NetworkTI.TiContext,
+    ($IniConfig["WebDaemons"] -as [string[]]), 
+    ($IniConfig["DbDaemons"] -as [string[]]), 
+    ($IniConfig["ShellInterpreters"] -as [string[]]), 
+    ($IniConfig["SuspiciousPaths"] -as [string[]])
+)
+
+[RealTimeC2Sensor]::StartSession()
+
+Write-Diag "Native FFI Bridge successfully initialized." "STARTUP"
+
 # ====================== MAIN EVENT LOOP ======================
 Write-Diag "Initiating 20-second JIT compilation and RAM stabilization phase..." "STARTUP"
 Write-Diag "    [*] Initializing Math Engine and pre-compiling native FFI pointers..." "STARTUP"
@@ -1022,10 +1066,22 @@ try {
 
                 if (-not $evt) { continue }
 
-                if ($evt.Provider -eq "DiagLog") { Write-Diag $evt.Message "INFO"; continue }
-                if ($evt.Error) {
-                    Write-Diag "FATAL ETW CRASH: $($evt.Error)" "ERROR"
-                    Add-AlertMessage "FATAL ERROR: C# ETW THREAD CRASHED" $cRed
+                if ($evt.Provider -eq "DiagLog") {
+                    if ($evt.Message -match "SENSOR_BLINDING_DETECTED:(\d+)") {
+                        $dropped = $matches[1]
+                        $blindJson = "{`"ThreatIntel`":`"CRITICAL: SENSOR BLINDING (ETW Buffer Exhaustion). Dropped $dropped Events.`"}"
+                        
+                        Submit-SensorAlert -Type "ML_Beacon" `
+                            -Destination "Localhost" `
+                            -Image "Windows_Kernel" `
+                            -Flags "ETW Buffer Exhaustion Attack Detected ($dropped events lost)" `
+                            -Confidence 100 `
+                            -RawJson $blindJson
+
+                        Draw-AlertWindow 
+                    } else {
+                        Write-Diag $evt.Message "C#-ENGINE"
+                    }
                     continue
                 }
 
@@ -1386,8 +1442,8 @@ try {
 
                                 $targetIp = "Unknown"; if ($alertKey -match "IP_([0-9\.]+)") { $targetIp = $matches[1] }
                                 $portVal = "Unknown"; if ($alertKey -match "_Port_([0-9a-zA-Z_]+)") { $portVal = $matches[1] }
+                                $mlLearnKey = "ML_SUPPRESS|$resolvedImage|$targetIp|$portVal"
 
-                                $mlLearnKey = "ML_SUPPRESS|$resolvedImage|$targetIp|$($alert.alert_reason)"
                                 if (-not $global:UebaLearningCache.ContainsKey($mlLearnKey)) {
                                     $global:UebaLearningCache[$mlLearnKey] = 0
                                 }
@@ -1397,7 +1453,7 @@ try {
                                 $suppressFlag = $false
                                 if ($suppressHit -gt 5) {
                                     $suppressFlag = $true
-                                    $alert.alert_reason = "UEBA Auto-Suppression (Learned Baseline): $($alert.alert_reason)"
+                                    $alert.alert_reason = "[SUPPRESSED by UEBA Baseline] $($alert.alert_reason)"
                                 }
 
                                 $baseJson = "{}"

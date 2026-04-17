@@ -30,7 +30,11 @@ using System.Runtime.InteropServices;
 public class RealTimeC2Sensor {
     // --- NATIVE RUST FFI BOUNDARIES ---
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool SetDllDirectory(string lpPathName);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool SetDllDirectory(string lpPathName);
+
+    // Watchdog state
+    private static int _lastEventsLost = 0;
 
     [DllImport("c2sensor_ml.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     private static extern IntPtr init_engine();
@@ -129,7 +133,7 @@ public class RealTimeC2Sensor {
             IpPrefixExclusions.Add(new System.Text.RegularExpressions.Regex(ip, System.Text.RegularExpressions.RegexOptions.Compiled));
         }
 
-        SetDllDirectory(scriptDir);
+        SetDllDirectory(@"C:\ProgramData\C2Sensor\Bin");
 
         try {
             _mlEnginePtr = init_engine();
@@ -669,6 +673,22 @@ public class RealTimeC2Sensor {
                 _session.Source.Process();
             } catch (Exception ex) {
                 EventQueue.Enqueue(new C2Event { Error = EscapeJson(ex.Message) });
+            }
+        });
+
+        // Telemetry Blinding - Background Watchdog for ETW Buffer Exhaustion
+        Task.Run(async () => {
+            while (IsSessionHealthy()) {
+                await Task.Delay(2000); // Check every 2 seconds
+                if (_session != null && _session.EventsLost > _lastEventsLost) {
+                    int dropped = _session.EventsLost - _lastEventsLost;
+                    _lastEventsLost = _session.EventsLost;
+                    
+                    EventQueue.Enqueue(new C2Event { 
+                        Provider = "DiagLog", 
+                        Message = $"SENSOR_BLINDING_DETECTED:{dropped}" 
+                    });
+                }
             }
         });
     }
