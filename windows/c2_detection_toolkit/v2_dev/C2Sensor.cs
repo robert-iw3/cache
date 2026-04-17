@@ -74,6 +74,8 @@ public class RealTimeC2Sensor {
 
     // Thread-safe queue passing strongly-typed objects instead of strings
     public static ConcurrentQueue<C2Event> EventQueue = new ConcurrentQueue<C2Event>();
+    // Thread-safe cache to map PIDs to their Command Lines natively
+    private static ConcurrentDictionary<int, string> ProcessCmdLines = new ConcurrentDictionary<int, string>();
     private static TraceEventSession _session;
     private static HashSet<string> DnsExclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -401,6 +403,11 @@ public class RealTimeC2Sensor {
                         if (data.ProviderName.Contains("Kernel-Process")) {
                             if (data.EventName.Contains("Start")) {
                                 string imageClean = System.IO.Path.GetFileNameWithoutExtension(data.PayloadStringByName("ImageFileName") ?? "").ToLower();
+                                string processCmd = data.PayloadStringByName("CommandLine") ?? "";
+
+                                if (!string.IsNullOrEmpty(processCmd)) {
+                                    ProcessCmdLines[data.ProcessID] = processCmd;
+                                }
 
                                 if (WebDaemons.Contains(imageClean)) {
                                     string context = data.PayloadStringByName("CommandLine") ?? imageClean;
@@ -506,10 +513,15 @@ public class RealTimeC2Sensor {
 
                         if (data.ProviderName.Contains("DNS") && (int)data.ID != 3008) return;
 
-                        destIp = ""; string port = ""; string query = ""; string cmdLine = ""; string size = "0";
+                        destIp = ""; string port = ""; string query = ""; string size = "0";
                         string pid = data.ProcessID.ToString();
                         string tid = data.ThreadID.ToString();
                         string image = string.IsNullOrEmpty(data.ProcessName) ? "Unknown" : data.ProcessName;
+
+                        string cmdLine = "";
+                        if (ProcessCmdLines.TryGetValue(data.ProcessID, out string cachedCmd)) {
+                            cmdLine = cachedCmd;
+                        }
 
                         bool isNetworkEvent = data.ProviderName.Contains("TCPIP") || data.ProviderName.Contains("Network");
 
@@ -572,7 +584,7 @@ public class RealTimeC2Sensor {
 
                         // --- NETWORK THREAT INTEL BINARY SEARCH EVALUATION ---
                         string threatIntelTag = "";
-                        
+
                         if (isNetworkEvent && !string.IsNullOrEmpty(destIp)) {
                             uint ipVal = IpToUint(destIp);
                             if (ipVal != 0 && Array.BinarySearch(CompiledIps, ipVal) >= 0) {
@@ -613,10 +625,12 @@ public class RealTimeC2Sensor {
                         }
 
                         // Embed the Threat Intel tag AND Traffic Direction directly into the standard telemetry payload
+                        string effectiveDest = string.IsNullOrEmpty(destIp) ? query : destIp;
+                        string effectivePort = (string.IsNullOrEmpty(port) || port == "0") ? (data.ProviderName.Contains("DNS") ? "53" : "0") : port;
                         string safeProvider = EscapeJson(data.ProviderName ?? "Unknown");
                         string safeEventName = EscapeJson(data.EventName ?? "Unknown");
-                        string safeDestIp    = EscapeJson(destIp ?? "");
-                        string safePort      = EscapeJson(port ?? "");
+                        string safeDestIp    = EscapeJson(effectiveDest ?? "");
+                        string safePort      = EscapeJson(effectivePort ?? "");
                         string safeQuery     = EscapeJson(query ?? "");
                         string safeImage     = EscapeJson(image ?? "Unknown");
                         string safeCmdLine   = EscapeJson(cmdLine ?? "");
@@ -626,10 +640,8 @@ public class RealTimeC2Sensor {
                         string timeStampStr = data.TimeStamp.ToString("O");
                         string json = null;
 
-                        if (!string.IsNullOrEmpty(threatIntelTag)) {
-                            json = string.Format(@"{{""Provider"":""{0}"",""EventName"":""{1}"",""TimeStamp"":""{2}"",""DestIp"":""{3}"",""Port"":""{4}"",""Query"":""{5}"",""Image"":""{6}"",""CommandLine"":""{7}"",""PID"":""{8}"",""TID"":""{9}"",""Size"":""{10}"",""ThreatIntel"":""{11}"",""TrafficDirection"":""{12}""}}",
-                                safeProvider, safeEventName, timeStampStr, safeDestIp, safePort, safeQuery, safeImage, safeCmdLine, pid, tid, size, safeThreatIntel, safeTrafficDirection);
-                        }
+                        json = string.Format(@"{{""Provider"":""{0}"",""EventName"":""{1}"",""TimeStamp"":""{2}"",""DestIp"":""{3}"",""Port"":""{4}"",""Query"":""{5}"",""Image"":""{6}"",""CommandLine"":""{7}"",""PID"":""{8}"",""TID"":""{9}"",""Size"":""{10}"",""ThreatIntel"":""{11}"",""TrafficDirection"":""{12}""}}",
+                            safeProvider, safeEventName, timeStampStr, safeDestIp, safePort, safeQuery, safeImage, safeCmdLine, pid, tid, size, safeThreatIntel, safeTrafficDirection);
 
                         EventQueue.Enqueue(new C2Event {
                             Provider = data.ProviderName,

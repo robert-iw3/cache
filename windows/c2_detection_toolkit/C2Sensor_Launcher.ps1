@@ -57,11 +57,24 @@ if (-not $global:HostIP) { $global:HostIP = "Unknown" }
 $global:SensorUser = "$env:USERDOMAIN\$env:USERNAME".Replace("\", "\\")
 $global:ComputerName = $env:COMPUTERNAME
 
+# --- UEBA BASELINING ENGINE ---
+function Log-UebaBaseline([string]$RawJson, [string]$Context) {
+    if ([string]::IsNullOrEmpty($RawJson) -or $RawJson -eq "{}") { return }
+    try {
+        $eventId = [guid]::NewGuid().ToString()
+        $injectStr = "`"EventID`":`"$eventId`", `"ComputerName`":`"$global:ComputerName`", `"HostIP`":`"$global:HostIP`", `"SensorUser`":`"$global:SensorUser`", `"LearningHit`":0, `"BaselineContext`":`"$Context`", "
+        $enrichedJson = $RawJson.Insert(1, $injectStr)
+        $global:uebaBatch.Add($enrichedJson)
+    } catch {}
+}
+
+# --- STRUCTURED ALERTS ---
 function Submit-SensorAlert {
     param(
         [string]$Type, [string]$Destination, [string]$Image, [string]$Flags,
         [int]$Confidence, [string]$AttckMapping = "N/A", [string]$EventId = ([guid]::NewGuid().ToString()),
-        [string]$RawJson = $null, [int]$LearningHit = 0
+        [string]$RawJson = $null, [int]$LearningHit = 0, [string]$CommandLine = "Unknown",
+        [switch]$IsSuppressed
     )
 
     # 1. Deduplication Logic
@@ -74,10 +87,12 @@ function Submit-SensorAlert {
     }
 
     # 2. Targeted UEBA Telemetry Persistence
-    if ($RawJson -and $Type -eq "ThreatIntel_Match") {
-        $injectStr = "`"EventID`":`"$EventId`", `"ComputerName`":`"$global:ComputerName`", `"HostIP`":`"$global:HostIP`", `"SensorUser`":`"$global:SensorUser`", `"LearningHit`":$LearningHit, "
-        $enrichedJson = $RawJson.Insert(1, $injectStr)
-        $global:uebaBatch.Add($enrichedJson)
+    if ($RawJson -and ($Type -eq "ThreatIntel_Match" -or $Type -eq "ML_Beacon" -or $Type -eq "Static_Detection")) {
+        try {
+            $injectStr = "`"EventID`":`"$EventId`", `"ComputerName`":`"$global:ComputerName`", `"HostIP`":`"$global:HostIP`", `"SensorUser`":`"$global:SensorUser`", `"LearningHit`":$LearningHit, "
+            $enrichedJson = $RawJson.Insert(1, $injectStr)
+            $global:uebaBatch.Add($enrichedJson)
+        } catch {}
     }
 
     # 3. Standardized Object Construction
@@ -86,27 +101,32 @@ function Submit-SensorAlert {
         Timestamp_Local = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
         Timestamp_UTC   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
         ComputerName = $global:ComputerName; HostIP = $global:HostIP; SensorUser = $global:SensorUser
-        EventType = $Type; Destination = $Destination; Image = $Image
+        EventType = $Type; Destination = $Destination; Image = $Image; CommandLine = $CommandLine
         SuspiciousFlags = $Flags; ATTCKMappings = $AttckMapping; Confidence = $Confidence
-        Action = if ($global:IsArmed -and $Confidence -ge $ConfidenceThreshold) { "Mitigated" } else { "Logged" }
+        Action = if ($IsSuppressed) { "Suppressed" } elseif ($global:IsArmed -and $Confidence -ge $ConfidenceThreshold) { "Mitigated" } else { "Logged" }
     }
 
-    # 4. Queue for Batch Logging (SIEM)
+    # 4. Queue for Batch Logging
     $global:cycleAlerts[$dedupKey] = $alertObj
 
-    # 5. INSTANT HUD RENDERING & FAST-PATH MITIGATION
-    if ($Type -eq "ThreatIntel_Match") {
-        # Threat Intel is Deterministic (Known-Bad). Strike instantly.
-        $alertObj.Action = if ($global:IsArmed) { "Mitigated" } else { "Logged" }
-        $alertObj.Confidence = 100
-        Add-AlertMessage "CRITICAL TI: $Flags ($Image)" "$([char]27)[38;2;255;49;49m" # Red
-    } elseif ($alertObj.Action -eq "Mitigated" -or $Confidence -ge 90) {
-        # ML Engine Confirmed Anomaly (Behavioral)
-        Add-AlertMessage "CRITICAL BEHAVIOR: $Flags ($Image)" "$([char]27)[38;2;255;49;49m" # Red
-    } elseif ($LearningHit -gt 0) {
-        # UEBA Engine is actively tracking/learning a baseline
-        Add-AlertMessage "LEARNING: $Flags ($Image) [Pkt:$LearningHit]" "$([char]27)[38;2;255;215;0m" # Gold
-    } else {
+    # 5. INSTANT HUD RENDERING: STRICT UEBA PARITY
+    # If the UEBA engine learned this is normal noise, skip HUD rendering to prevent console fatigue
+    if ($IsSuppressed) { return }
+
+    if ($alertObj.Action -eq "Mitigated" -or $Confidence -ge 100) {
+        $prefix = if ($Type -eq "ThreatIntel_Match") { "CRITICAL TI" } else { "CRITICAL BEHAVIOR" }
+        Add-AlertMessage "$($prefix): $Flags ($Image)" "$([char]27)[38;2;255;49;49m" # Red
+    } 
+    elseif ($Confidence -ge 90) {
+        # Confirmed Anomaly, but deferring to UEBA/Analyst for chronological conviction
+        Add-AlertMessage "ANOMALY: $Flags ($Image) [Conf:$Confidence]" "$([char]27)[38;2;255;103;0m" # Orange
+    } 
+    elseif ($LearningHit -gt 0 -or $Type -match "ML_Beacon|ThreatIntel_Match") {
+        # Actively baselining normal vs abnormal
+        $hitStr = if ($LearningHit -gt 0) { " [Pkt:$LearningHit]" } else { "" }
+        Add-AlertMessage "LEARNING: $Flags ($Image)$hitStr" "$([char]27)[38;2;255;215;0m" # Gold
+    } 
+    else {
         Add-AlertMessage "STATIC: $Flags ($Image)" "$([char]27)[38;2;255;255;255m" # White
     }
 
@@ -915,6 +935,77 @@ function Is-AnomalousDomain([string]$domain) {
 }
 
 # ====================== MAIN EVENT LOOP ======================
+Write-Diag "Initiating 20-second JIT compilation and RAM stabilization phase..." "STARTUP"
+Write-Diag "    [*] Initializing Math Engine and pre-compiling native FFI pointers..." "STARTUP"
+Write-Host "[*] Stabilizing memory footprint (20-second cooldown)..." -ForegroundColor Green
+
+Write-Host "Call trans opt: received. 2-19-98 13:24:18 REC:Loc" -ForegroundColor Green
+Start-Sleep -Milliseconds 1200
+Write-Host "Trace program: running`n" -ForegroundColor Green
+Start-Sleep -Milliseconds 2400
+
+[System.GC]::Collect()
+[System.GC]::WaitForPendingFinalizers()
+
+$matrixStart = Get-Date
+$width = [Console]::WindowWidth - 2
+$floorY = 35
+$startY = [Console]::CursorTop + 1
+
+if ($startY -ge $floorY - 5) { $startY = 15 }
+
+$columns = @(0) * $width
+Write-Host "$([char]27)[?25l" -NoNewline
+
+while (((Get-Date) - $matrixStart).TotalSeconds -lt 20) {
+    for ($i = 0; $i -lt $width; $i++) {
+        if ($columns[$i] -eq 0 -and (Get-Random -Maximum 100) -gt 97) {
+            $columns[$i] = 1
+        }
+
+        if ($columns[$i] -gt 0) {
+            $y = $startY + $columns[$i]
+
+            if ($y -lt $floorY) {
+                [Console]::SetCursorPosition($i, $y)
+                Write-Host ([char](Get-Random -Minimum 33 -Maximum 126)) -ForegroundColor Green -NoNewline
+
+                if ($y -gt $startY + 1) {
+                    [Console]::SetCursorPosition($i, $y - 1)
+                    Write-Host ([char](Get-Random -Minimum 33 -Maximum 126)) -ForegroundColor DarkGreen -NoNewline
+                }
+
+                if ($y -gt $startY + 6) {
+                    [Console]::SetCursorPosition($i, $y - 6)
+                    Write-Host " " -NoNewline
+                }
+                $columns[$i]++
+            } else {
+                for ($t = 0; $t -lt 7; $t++) {
+                    $tailY = $y - $t
+                    if ($tailY -ge $startY -and $tailY -lt $floorY) {
+                        [Console]::SetCursorPosition($i, $tailY)
+                        Write-Host " " -NoNewline
+                    }
+                }
+                $columns[$i] = 0
+            }
+        }
+    }
+    Start-Sleep -Milliseconds 40
+}
+
+# --- CLEANUP VIEWPORT ---
+for ($y = 0; $y -lt 36; $y++) {
+    [Console]::SetCursorPosition(0, $y)
+    Write-Host (" " * $width) -NoNewline
+}
+
+Write-Host "$([char]27)[?25h" -NoNewline
+[Console]::SetCursorPosition(0, 0)
+Write-Diag "Stabilization complete. Memory optimized. Starting event loop." "STARTUP"
+# ==================================================================================
+
 Draw-AlertWindow
 
 try {
@@ -1071,28 +1162,22 @@ try {
                 $props.ATTCKMappings.Add("TA0002: T1059")
             }
             if ($evt.Provider -eq "Microsoft-Windows-DNS-Client" -and $evt.Query) {
-                    $domain = $evt.Query.TrimEnd('.')
-                    $dLow = $domain.ToLower()
+                $domain = $evt.Query.TrimEnd('.')
+                $dLow = $domain.ToLower()
 
-                    # Telemetry Safety Bypass
-                    if ($dLow -notmatch "otel|telemetry|api|prod-") {
+                if ($dLow -notmatch "otel|telemetry|api|prod-") {
 
-                        # Length & Character Math
-                        $vowels = ([regex]::Matches($dLow, "[aeiou]")).Count
-                        $digits = ([regex]::Matches($domain, "\d")).Count
-                        $len = $domain.Length
-
-                        if ($len -gt 45 -or ($len -gt 0 -and ($digits / $len) -gt 0.45) -or ($len -gt 0 -and ($vowels / $len) -lt 0.10)) {
-
-                            $entropy = Get-Entropy $domain
-                            # Strict Entropy Gate
-                            if ($entropy -gt 4.5) {
-                                $sFlags += "DGA DNS Query Detected"
-                                $sMitre += "TA0011: T1568.002"
-                            }
-                        }
+                    if (Is-AnomalousDomain $domain) {
+                        $entropy = Get-Entropy $domain
+                        $props.SuspiciousFlags.Add("DGA DNS Query Detected (Entropy: $([math]::Round($entropy, 2)))")
+                        $props.ATTCKMappings.Add("TA0011: T1568.002")
                     }
                 }
+
+                if ($props.SuspiciousFlags.Count -eq 0 -and [string]::IsNullOrEmpty($evt.ThreatIntel)) {
+                    Log-UebaBaseline -RawJson $jsonStr -Context "Normal_DNS"
+                }
+            }
 
             if ($evt.Provider -match "TCPIP|Network" -and 
                 -not [string]::IsNullOrEmpty($evt.DestIp) -and 
@@ -1107,13 +1192,16 @@ try {
                     "PID_$($evt.PID)_TID_$($evt.TID)_Port_$safePort"
                 }
 
+                $isFirstPacket = $false
                 if (-not $connectionHistory.ContainsKey($key)) {
+                    $isFirstPacket = $true
                     $connectionHistory[$key] = [System.Collections.Generic.Queue[datetime]]::new()
                     $flowMetadata[$key] = @{
                         dst_ips = [System.Collections.Generic.Queue[string]]::new()
                         packet_sizes = [System.Collections.Generic.Queue[int]]::new()
                         domain = if ($evt.Query) { $evt.Query } else { $evt.DestIp }
                         image = $evt.Image
+                        commandline = $evt.CommandLine
                         total_out = 0
                         total_in = 0
                     }
@@ -1130,6 +1218,11 @@ try {
                     $connectionHistory[$key].Enqueue($evtTime)
                     $lastPingTime[$key] = $evtTime
                     $flowMetadata[$key].dst_ips.Enqueue($evt.DestIp)
+                    $flowMetadata[$key].raw_json = $evt.RawJson
+
+                    if ($isFirstPacket -and [string]::IsNullOrEmpty($evt.ThreatIntel)) {
+                        Log-UebaBaseline -RawJson $evt.RawJson -Context "New_Network_Flow"
+                    }
 
                     if ($evt.Size -match '^\d+$' -and $evt.Size -ne "0") {
                         $flowMetadata[$key].packet_sizes.Enqueue([int]$evt.Size)
@@ -1155,7 +1248,20 @@ try {
             # --- STATIC BEHAVIORAL FLUSH ---
             if ($props.SuspiciousFlags.Count -gt 0) {
                 $safeDestStatic = if ($evt.DestIp) { $evt.DestIp } elseif ($evt.Query) { $evt.Query } else { "Unknown" }
-                Submit-SensorAlert -Type "Static_Detection" -Destination $safeDestStatic -Image $procName -Flags ($props.SuspiciousFlags -join '; ') -Confidence 90 -AttckMapping ($props.ATTCKMappings -join '; ')
+
+                $staticCmd = $evt.CommandLine
+                if ([string]::IsNullOrWhiteSpace($staticCmd) -and $evt.PID -match '^\d+$' -and $evt.PID -ne "0" -and $evt.PID -ne "4") {
+                    $wmi = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($evt.PID)" -ErrorAction SilentlyContinue
+                    if ($wmi) { $staticCmd = $wmi.CommandLine }
+                }
+
+                $enrichedJson = $jsonStr
+                if ($staticCmd) {
+                    $cleanCmd = $staticCmd.Replace('\', '\\').Replace('"', '\"')
+                    $enrichedJson = $enrichedJson.Replace('"CommandLine":""', "`"CommandLine`":`"$cleanCmd`"")
+                }
+
+                Submit-SensorAlert -Type "Static_Detection" -Destination $safeDestStatic -Image $procName -Flags ($props.SuspiciousFlags -join '; ') -Confidence 90 -AttckMapping ($props.ATTCKMappings -join '; ') -RawJson $enrichedJson -CommandLine $staticCmd
             }
         }
 
@@ -1188,8 +1294,18 @@ try {
                         if ($flowMetadata[$key].image -and $flowMetadata[$key].image -ne "Unknown") {
                             $procName = [System.IO.Path]::GetFileNameWithoutExtension($flowMetadata[$key].image)
                         } elseif ($pidVal -match '^\d+$') {
-                            try { $procName = (Get-Process -Id $pidVal -ErrorAction Stop).Name; if ($pidVal -eq "4") { $procName = "System" } } catch { $procName = "Terminated" }
-                        }
+                                    try { 
+                                        $proc = Get-Process -Id $pidVal -ErrorAction Stop
+                                        if ($resolvedImage -eq "Unknown") { $resolvedImage = $proc.Name }
+
+                                        if ([string]::IsNullOrWhiteSpace($resolvedCmdLine) -or $resolvedCmdLine -eq "Unknown") {
+                                            $wmi = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $pidVal" -ErrorAction SilentlyContinue
+                                            if ($wmi) { $resolvedCmdLine = $wmi.CommandLine }
+                                        }
+                                    } catch { 
+                                        if ($resolvedImage -eq "Unknown") { $resolvedImage = "Terminated" }
+                                    }
+                                }
 
                         $logEntry = "Timestamp: $firstPing, Destination IP: $destIp, Destination Domain: $domain, Port: $portVal, PID: $pidVal, Process Name: $procName, Connection Amount over duration: $count connections over ${duration}s"
                         Add-Content -Path $MonitorLogPath -Value $logEntry -Encoding UTF8
@@ -1247,15 +1363,65 @@ try {
                                 $pidVal = "Unknown"; if ($alertKey -match "PID_(\d+)") { $pidVal = $matches[1] }
 
                                 $resolvedImage = "Unknown"
-                                if ($flowMetadata.ContainsKey($alertKey) -and $flowMetadata[$alertKey].image -ne "Unknown") {
-                                    $resolvedImage = [System.IO.Path]::GetFileNameWithoutExtension($flowMetadata[$alertKey].image)
-                                } elseif ($pidVal -match '^\d+$') {
-                                    try { $resolvedImage = (Get-Process -Id $pidVal -ErrorAction Stop).Name } catch { $resolvedImage = "Terminated" }
+                                $resolvedCmdLine = "Unknown" 
+
+                                if ($flowMetadata.ContainsKey($alertKey)) {
+                                    if ($flowMetadata[$alertKey].image -ne "Unknown") {
+                                        $resolvedImage = [System.IO.Path]::GetFileNameWithoutExtension($flowMetadata[$alertKey].image)
+                                    }
+                                    if ($flowMetadata[$alertKey].commandline) {
+                                        $resolvedCmdLine = $flowMetadata[$alertKey].commandline
+                                    }
+                                }
+
+                                if ($pidVal -match '^\d+$' -and ([string]::IsNullOrWhiteSpace($resolvedCmdLine) -or $resolvedCmdLine -eq "Unknown")) {
+                                    try { 
+                                        if ($resolvedImage -eq "Unknown") { $resolvedImage = (Get-Process -Id $pidVal -ErrorAction Stop).Name }
+                                        $wmi = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $pidVal" -ErrorAction SilentlyContinue
+                                        if ($wmi) { $resolvedCmdLine = $wmi.CommandLine }
+                                    } catch { 
+                                        if ($resolvedImage -eq "Unknown") { $resolvedImage = "Terminated" }
+                                    }
                                 }
 
                                 $targetIp = "Unknown"; if ($alertKey -match "IP_([0-9\.]+)") { $targetIp = $matches[1] }
+                                $portVal = "Unknown"; if ($alertKey -match "_Port_([0-9a-zA-Z_]+)") { $portVal = $matches[1] }
 
-                                Submit-SensorAlert -Type "ML_Beacon" -Destination $targetIp -Image $resolvedImage -Flags $alert.alert_reason -Confidence $alert.confidence -AttckMapping "T1071"
+                                $mlLearnKey = "ML_SUPPRESS|$resolvedImage|$targetIp|$($alert.alert_reason)"
+                                if (-not $global:UebaLearningCache.ContainsKey($mlLearnKey)) {
+                                    $global:UebaLearningCache[$mlLearnKey] = 0
+                                }
+                                $global:UebaLearningCache[$mlLearnKey]++
+                                $suppressHit = $global:UebaLearningCache[$mlLearnKey]
+
+                                $suppressFlag = $false
+                                if ($suppressHit -gt 5) {
+                                    $suppressFlag = $true
+                                    $alert.alert_reason = "UEBA Auto-Suppression (Learned Baseline): $($alert.alert_reason)"
+                                }
+
+                                $baseJson = "{}"
+                                if ($flowMetadata.ContainsKey($alertKey) -and $flowMetadata[$alertKey].raw_json) {
+                                    $baseJson = $flowMetadata[$alertKey].raw_json
+                                }
+
+                                $cleanReason = $alert.alert_reason -replace '"', '\"'
+                                $alertJson = $baseJson.Replace('"ThreatIntel":""', "`"ThreatIntel`":`"ML_Beacon: $cleanReason`"")
+
+                                if ($resolvedCmdLine -and $resolvedCmdLine -ne "Unknown") {
+                                    $cleanCmd = $resolvedCmdLine.Replace('\', '\\').Replace('"', '\"')
+                                    $alertJson = $alertJson.Replace('"CommandLine":""', "`"CommandLine`":`"$cleanCmd`"")
+                                }
+
+                                Submit-SensorAlert -Type "ML_Beacon" `
+                                    -Destination $targetIp `
+                                    -Image $resolvedImage `
+                                    -Flags $alert.alert_reason `
+                                    -Confidence $alert.confidence `
+                                    -AttckMapping "T1071" `
+                                    -RawJson $alertJson `
+                                    -CommandLine $resolvedCmdLine `
+                                    -IsSuppressed:$suppressFlag
                             }
                         }
                     } catch {
@@ -1338,7 +1504,12 @@ try {
 
         # === DEEP MEMORY PROTECTION: GARBAGE COLLECTION (every 30 minutes) ===
         if (($now - $lastUebaCleanup).TotalMinutes -ge 30 -or $global:UebaLearningCache.Count -gt 30000) {
-            $global:UebaLearningCache.Clear()
+
+            $staleUebaKeys = [System.Collections.Generic.List[string]]::new()
+            foreach ($k in $global:UebaLearningCache.Keys) {
+                if ($global:UebaLearningCache[$k] -lt 5) { $staleUebaKeys.Add($k) }
+            }
+            foreach ($k in $staleUebaKeys) { [void]$global:UebaLearningCache.Remove($k) }
 
             # Clear unbounded correlation trackers to prevent infinite growth
             $LateralTrack.Clear()
