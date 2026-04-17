@@ -572,7 +572,7 @@ public class RealTimeC2Sensor {
 
                         // --- NETWORK THREAT INTEL BINARY SEARCH EVALUATION ---
                         string threatIntelTag = "";
-                        
+
                         if (isNetworkEvent && !string.IsNullOrEmpty(destIp)) {
                             uint ipVal = IpToUint(destIp);
                             if (ipVal != 0 && Array.BinarySearch(CompiledIps, ipVal) >= 0) {

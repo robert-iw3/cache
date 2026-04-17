@@ -310,13 +310,13 @@ function Lockdown-ProjectDir {
     # Complete Directory Anti-Tamper Lockdown
     $C2RootPath = "C:\ProgramData\C2Sensor"
     Write-Diag "Applying strict Anti-Tamper ACLs to $C2RootPath..." "STARTUP"
-    
+
     try {
         # Ensure the root exists before locking it
         if (-not (Test-Path $C2RootPath)) { New-Item -ItemType Directory -Path $C2RootPath -Force | Out-Null }
 
         $acl = Get-Acl -Path $C2RootPath
-        
+
         # Block inheritance and wipe existing inherited rules from the C:\ drive
         $acl.SetAccessRuleProtection($true, $false)
 
@@ -590,7 +590,7 @@ function Initialize-NetworkThreatIntel {
     Write-Diag "Flat-File Compilation: Injected $flatCount raw indicators into memory." "STARTUP"
     New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
     Write-Diag "Threat Intel Compilation Complete. Passing $(($MaliciousIps.Count + $MaliciousDomains.Count)) signatures to Memory." "STARTUP"
-    
+
     # Sort arrays to enable O(log N) Binary Search in C#
     $MaliciousIps.Sort()
     $MaliciousDomains.Sort()
@@ -1073,17 +1073,17 @@ try {
             if ($evt.Provider -eq "Microsoft-Windows-DNS-Client" -and $evt.Query) {
                     $domain = $evt.Query.TrimEnd('.')
                     $dLow = $domain.ToLower()
-                    
+
                     # Telemetry Safety Bypass
                     if ($dLow -notmatch "otel|telemetry|api|prod-") {
-                        
+
                         # Length & Character Math
                         $vowels = ([regex]::Matches($dLow, "[aeiou]")).Count
                         $digits = ([regex]::Matches($domain, "\d")).Count
                         $len = $domain.Length
 
                         if ($len -gt 45 -or ($len -gt 0 -and ($digits / $len) -gt 0.45) -or ($len -gt 0 -and ($vowels / $len) -lt 0.10)) {
-                            
+
                             $entropy = Get-Entropy $domain
                             # Strict Entropy Gate
                             if ($entropy -gt 4.5) {

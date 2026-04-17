@@ -412,18 +412,20 @@ impl BehavioralEngine {
 
         // 1.5. Rigid Heartbeat Heuristic (Packet Size Consistency)
         // Normal web traffic varies. C2 encrypted heartbeats are identical in byte size.
-        if cv_size < 0.15 && mean_size < 1500.0 && n_intervals >= 8 {
+        if cv_size < 0.1 && mean_size > 0.0 {
             flags.push(format!("Rigid C2 Heartbeat (Size CV: {:.2}, Mean: {:.0}B)", cv_size, mean_size));
-            apt_score_multiplier += 20.0;
+            apt_score_multiplier += 30.0;
         }
 
         let skewness = MathEngine::calculate_skewness(&flow.intervals, mean_int, std_int);
 
         // 1.75. Advanced Evasion: Artificial Jitter (Skewness)
         // Highly engineered Gamma-distributed jitter lacks the natural skew of organic human traffic.
-        if skewness.abs() < 0.5 && std_int > 2.0 && n_intervals >= 8 {
+        // TUNE: Prevent micro-latency on rigid timers from mimicking Uniform Jitter
+        // Only trigger if the Standard Deviation is greater than 1 second.
+        if skewness.abs() < 0.5 && std_int > 1.0 {
             flags.push(format!("Artificial Jitter Distribution (Skewness: {:.2})", skewness));
-            apt_score_multiplier += 30.0;
+            apt_score_multiplier += 20.0;
         }
 
         // 1.8. Low-and-Slow Data Exfiltration
