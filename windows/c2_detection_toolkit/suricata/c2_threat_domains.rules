@@ -1,0 +1,96 @@
+# --- Data Exfiltration / OOB Domains ---
+alert dns any any -> any any (msg:"OOB Exfil Domain"; content:"oastify.com"; sid:8181002; rev:2;)
+alert dns any any -> any any (msg:"OOB Exfil Domain"; content:"burpcollaborator.net"; sid:8181003; rev:2;)
+alert dns any any -> any any (msg:"OOB Exfil Domain"; content:"interact.sh"; sid:8181004; rev:2;)
+alert dns any any -> any any (msg:"OOB Exfil Domain"; content:"requestbin.net"; sid:8181005; rev:2;)
+
+# --- Emmenhtal & Amadey C2 ---
+alert dns any any -> any any (msg:"Emmenhtal C2"; content:"pivqmane.com"; sid:2525001; rev:2;)
+
+# --- Famous Chollima GolangGhost RAT - Primary C2 ---
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"quickcamfix.online"; sid:3434015; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"auto-fixer.online"; sid:3434016; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"quickdriverupdate.online"; sid:3434017; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"camtuneup.online"; sid:3434018; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"driversofthub.online"; sid:3434019; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"drive-release.cloud"; sid:3434020; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"vcamfixer.online"; sid:3434021; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"nvidia-drive.cloud"; sid:3434022; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"nvidia-release.us"; sid:3434023; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"autodriverfix.online"; sid:3434024; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"camdriversupport.com"; sid:3434025; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"smartdriverfix.cloud"; sid:3434026; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"drivercams.cloud"; sid:3434027; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"camtechdrivers.com"; sid:3434028; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"web-cam.cloud"; sid:3434029; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"camera-drive.org"; sid:3434030; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"nvidia-release.org"; sid:3434031; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"fixdiskpro.online"; sid:3434032; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost C2"; content:"autocamfixer.online"; sid:3434033; rev:2;)
+
+# --- Famous Chollima Fake Job Recruitment Themes ---
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"krakenhire.com"; sid:3434034; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"yuga.skillquestions.com"; sid:3434035; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"uniswap.speakure.com"; sid:3434036; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"doodles.skillquestions.com"; sid:3434037; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"hireviavideo.com"; sid:3434038; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"kraken.livehiringpro.com"; sid:3434039; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"quiz-nest.com"; sid:3434040; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"smartvideohire.com"; sid:3434041; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"talent-hiringstep.com"; sid:3434042; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"provevidskillcheck.com"; sid:3434043; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"skill.vidintermaster.com"; sid:3434044; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"digitaltalent.review"; sid:3434045; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"robinhood.ecareerscan.com"; sid:3434046; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"evalswift.com"; sid:3434047; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"livetalentpro.com"; sid:3434048; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"quantumnodespro.com"; sid:3434049; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"evalassesso.com"; sid:3434050; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"parallel.eskillora.com"; sid:3434051; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"coinbase.talentmonitoringtool.com"; sid:3434052; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"uniswap.testforhire.com"; sid:3434053; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"coinbase.talenthiringtool.com"; sid:3434054; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"crosstheages.skillence360.com"; sid:3434055; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"parallel.eskillprov.com"; sid:3434056; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"assesstrack.com"; sid:3434057; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"talent-hiringtalk.com"; sid:3434058; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"uniswap.prehireiq.com"; sid:3434059; rev:2;)
+alert dns any any -> any any (msg:"GolangGhost Fake Job"; content:"fast-video-recording.com"; sid:3434060; rev:2;)
+
+# --- Laundry Bear / Void Blizzard Infrastructure ---
+alert dns any any -> any any (msg:"Laundry Bear C2"; content:"micsrosoftonline.com"; sid:4444001; rev:2;)
+alert dns any any -> any any (msg:"Laundry Bear C2"; content:"ebsumrnit.eu"; sid:4444002; rev:2;)
+alert dns any any -> any any (msg:"Laundry Bear C2"; content:"enticator-secure.com"; sid:4444003; rev:2;)
+alert dns any any -> any any (msg:"Laundry Bear C2"; content:"walshhgroup.com"; sid:4444004; rev:2;)
+alert dns any any -> any any (msg:"Laundry Bear C2"; content:"maidservant.shop"; sid:4444005; rev:2;)
+
+# --- Lazarus Group C2 Domains ---
+alert dns any any -> any any (msg:"Lazarus Group C2"; content:"0927.vercel.app"; sid:3333005; rev:2;)
+alert dns any any -> any any (msg:"Lazarus Group C2"; content:"log-server-lovat.vercel.app"; sid:3333006; rev:2;)
+alert dns any any -> any any (msg:"Lazarus Group C2"; content:"fashdefi.store"; sid:3333011; rev:2;)
+
+# --- Novablight Infostealer ---
+alert dns any any -> any any (msg:"Novablight Payload Delivery"; content:"gonefishe.com"; sid:3535003; rev:2;)
+
+# --- Secret Blizzard / ApolloShadow C2 ---
+alert dns any any -> any any (msg:"ApolloShadow C2"; content:"kav-certificates.info"; sid:4545001; rev:2;)
+
+# --- Serpentine Cloud C2 Infrastructure ---
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpurekfl.duckdns.org"; sid:1000001; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"ncmomenthv.duckdns.org"; sid:1000002; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"hvncmomentpure.duckdns.org"; sid:1000003; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure.duckdns.org"; sid:1000004; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure.shop"; sid:1000005; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure.sbs"; sid:1000006; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure.click"; sid:1000007; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure.twilightparadox.com"; sid:1000008; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure1.strangled.net"; sid:1000009; rev:2;)
+alert dns any any -> any any (msg:"Serpentine Cloud C2"; content:"nhvncpure2.mooo.com"; sid:1000010; rev:2;)
+
+# --- UAT-6382 Campaign Infrastructure ---
+alert dns any any -> any any (msg:"UAT-6382 C2"; content:"cdn.phototagx.com"; sid:8282019; rev:2;)
+alert dns any any -> any any (msg:"UAT-6382 C2"; content:"www.roomako.com"; sid:8282020; rev:2;)
+alert dns any any -> any any (msg:"UAT-6382 C2"; content:"lgaircon.xyz"; sid:8282021; rev:2;)
+
+# --- UKC-1230 Comburglar C2 ---
+alert dns any any -> any any (msg:"Comburglar C2"; content:"techdataservice.us"; sid:1000005; rev:2;)

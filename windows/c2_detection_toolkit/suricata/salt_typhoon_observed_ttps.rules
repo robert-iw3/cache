@@ -1,0 +1,23 @@
+# Method 1: IOC Matching - DNS/HTTP to Known Domains/IPs
+alert dns any any -> any any (msg:"Salt Typhoon IOC - DNS Query to Known Domain"; dns.query; content:"aria-hidden.com"; nocase; reference:url,www.silentpush.com/blog/salt-typhoon-2025; classtype:trojan-activity; sid:3000001; rev:1;)
+alert dns any any -> any any (msg:"Salt Typhoon IOC - DNS Query to Known NS"; dns.query; content:"irdns.mars.orderbox-dns.com"; nocase; reference:url,www.silentpush.com/blog/salt-typhoon-2025; classtype:trojan-activity; sid:3000002; rev:1;)
+alert ip any any -> 162.251.82.0/24 any (msg:"Salt Typhoon IOC - Traffic to Known IP Cluster"; threshold:type both, track by_dst, count 5, seconds 300; reference:url,www.silentpush.com/blog/salt-typhoon-2025; classtype:trojan-activity; sid:3000003; rev:1;)
+
+# Method 2: CVE Exploits (Exploit Attempts)
+alert http any any -> any any (msg:"Salt Typhoon - CVE-2023-20198 Cisco IOS XE Exploit"; flow:established,to_server; http.method; content:"POST"; content:"/webui/"; http.uri; pcre:"/\/level_15_(configure|exec)/"; reference:cve,2023-20198; classtype:web-application-attack; sid:3000004; rev:1;)
+alert http any any -> any any (msg:"Salt Typhoon - CVE-2023-35082 Ivanti Auth Bypass"; flow:established,to_server; content:"/dana-na/auth/welcome.cgi"; http.uri; reference:cve,2023-35082; classtype:web-application-attack; sid:3000005; rev:1;)
+alert http any any -> any any (msg:"Salt Typhoon - CVE-2024-21887 Ivanti RCE"; flow:established,to_server; content:"/dana-na/auth/addportal.cgi"; http.uri; reference:cve,2024-21887; classtype:web-application-attack; sid:3000006; rev:1;)
+alert http any any -> any any (msg:"Salt Typhoon - CVE-2024-3400 PAN-OS GlobalProtect"; flow:established,to_server; content:"/ssl-vpn/getconfig.php"; http.uri; reference:cve,2024-3400; classtype:web-application-attack; sid:3000007; rev:1;)
+alert http any any -> any any (msg:"Salt Typhoon - CVE-2018-0171 Cisco Smart Install"; flow:established,to_server; content:"/netconf"; http.uri; reference:cve,2018-0171; classtype:web-application-attack; sid:3000008; rev:1;)
+
+# Method 4: ProtonMail Domains (DNS Queries; assumes known IOC domains)
+alert dns any any -> any any (msg:"Salt Typhoon - DNS to ProtonMail Registered Domain"; dns.query; content:"onlineeylity.com"; nocase; reference:url,www.silentpush.com/blog/salt-typhoon-2025; classtype:trojan-activity; sid:3000009; rev:1;)
+alert dns any any -> any any (msg:"Salt Typhoon - DNS to ProtonMail Registered Domain"; dns.query; content:"chekoodver.com"; nocase; reference:url,www.silentpush.com/blog/salt-typhoon-2025; classtype:trojan-activity; sid:3000010; rev:1;)
+
+# Method 5: Config Exfil over FTP/TFTP
+alert ftp any any -> any any (msg:"Salt Typhoon - FTP Config Exfil"; ftp.command; content:"STOR"; content:".conf"; distance:0; nocase; reference:url,www.cisa.gov/news-events/cybersecurity-advisories/aa25-239a; classtype:policy-violation; sid:3000011; rev:1;)
+alert tftp any any -> any any (msg:"Salt Typhoon - TFTP Config Exfil"; udp; content:"RRQ"; content:".cfg"; distance:0; nocase; reference:url,www.cisa.gov/news-events/cybersecurity-advisories/aa25-239a; classtype:policy-violation; sid:3000012; rev:1;)
+
+# Method 8: C2/Exfil via Public Services
+alert http any any -> any 443 (msg:"Salt Typhoon - Exfil to GitHub/Gmail"; flow:established,to_server; http.method; content:"POST"; http_host; content:"github.com"; startswith; content:"|0d 0a|Content-Length:|3e 0a|"; dsize:>1MB; reference:url,www.cisa.gov/news-events/cybersecurity-advisories/aa25-239a; classtype:trojan-activity; sid:3000013; rev:1;)
+alert http any any -> any 443 (msg:"Salt Typhoon - Exfil to AnonFiles/File.io"; flow:established,to_server; http.method; content:"POST"; http_host; content:"anonfiles.com"; startswith; dsize:>1MB; reference:url,www.cisa.gov/news-events/cybersecurity-advisories/aa25-239a; classtype:trojan-activity; sid:3000014; rev:1;)
