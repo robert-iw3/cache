@@ -30,7 +30,11 @@ using System.Runtime.InteropServices;
 public class RealTimeC2Sensor {
     // --- NATIVE RUST FFI BOUNDARIES ---
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool SetDllDirectory(string lpPathName);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool SetDllDirectory(string lpPathName);
+
+    // Watchdog state
+    private static int _lastEventsLost = 0;
 
     [DllImport("c2sensor_ml.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     private static extern IntPtr init_engine();
@@ -39,7 +43,10 @@ public class RealTimeC2Sensor {
     private static extern IntPtr evaluate_telemetry(IntPtr engine, string jsonPayload);
 
     [DllImport("c2sensor_ml.dll", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void free_string(IntPtr ptr);
+    private static extern IntPtr evaluate_flow(string json_payload);
+
+    [DllImport("c2sensor_ml.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void free_string(IntPtr s);
 
     [DllImport("c2sensor_ml.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern void teardown_engine(IntPtr engine);
@@ -100,6 +107,31 @@ public class RealTimeC2Sensor {
     private static HashSet<string> ShellInterpreters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static string[] SuspiciousPaths = Array.Empty<string>();
 
+    public static string EvaluateBatch(string jsonPayload) {
+        if (_mlEnginePtr == IntPtr.Zero || string.IsNullOrEmpty(jsonPayload)) return "{}";
+
+        IntPtr resultPtr = IntPtr.Zero;
+        try {
+            // MUST use evaluate_telemetry and pass the stateful _mlEnginePtr
+            resultPtr = evaluate_telemetry(_mlEnginePtr, jsonPayload);
+
+            if (resultPtr == IntPtr.Zero) return "{}";
+
+            // Marshal the pointer back to a managed C# string
+            string resultJson = Marshal.PtrToStringAnsi(resultPtr);
+            return resultJson ?? "{}";
+
+        } catch (Exception ex) {
+            EventQueue.Enqueue(new C2Event { Provider = "DiagLog", Message = $"FFI MARSHAL ERROR: {ex.Message}" });
+            return "{}";
+        } finally {
+            // Strict Memory Reclamation (CWE-415/416)
+            if (resultPtr != IntPtr.Zero) {
+                free_string(resultPtr);
+            }
+        }
+    }
+
     // Initialization method to receive the exclusions, DLL path, and Threat Intel from PowerShell
     public static void InitializeEngine(
         string scriptDir, 
@@ -129,7 +161,7 @@ public class RealTimeC2Sensor {
             IpPrefixExclusions.Add(new System.Text.RegularExpressions.Regex(ip, System.Text.RegularExpressions.RegexOptions.Compiled));
         }
 
-        SetDllDirectory(scriptDir);
+        SetDllDirectory(@"C:\ProgramData\C2Sensor\Bin");
 
         try {
             _mlEnginePtr = init_engine();
@@ -168,22 +200,6 @@ public class RealTimeC2Sensor {
             .Replace("\t", "\\t")
             .Replace("\b", "\\b")
             .Replace("\f", "\\f");
-    }
-
-    public static string EvaluateBatch(string jsonPayload) {
-        if (_mlEnginePtr == IntPtr.Zero) return "{\"daemon_error\": \"Engine not mapped.\"}";
-
-        try {
-            IntPtr resultPtr = evaluate_telemetry(_mlEnginePtr, jsonPayload);
-            if (resultPtr != IntPtr.Zero) {
-                string result = Marshal.PtrToStringAnsi(resultPtr);
-                free_string(resultPtr);
-                return result;
-            }
-        } catch (Exception ex) {
-            return "{\"daemon_error\": \"FFI Crash: " + EscapeJson(ex.Message) + "\"}";
-        }
-        return "{}";
     }
 
     private static ConcurrentDictionary<int, string> ActiveWebDaemons = new ConcurrentDictionary<int, string>();
@@ -405,6 +421,11 @@ public class RealTimeC2Sensor {
                                 string imageClean = System.IO.Path.GetFileNameWithoutExtension(data.PayloadStringByName("ImageFileName") ?? "").ToLower();
                                 string processCmd = data.PayloadStringByName("CommandLine") ?? "";
 
+                                // Uncontrolled Resource Consumption Protection (CWE-400)
+                                if (processCmd.Length > 4096) {
+                                    processCmd = processCmd.Substring(0, 4096) + " ...[TRUNCATED BY SENSOR LIMIT]";
+                                }
+
                                 if (!string.IsNullOrEmpty(processCmd)) {
                                     ProcessCmdLines[data.ProcessID] = processCmd;
                                 }
@@ -422,6 +443,7 @@ public class RealTimeC2Sensor {
                                 string removedContext;
                                 ActiveWebDaemons.TryRemove(data.ProcessID, out removedContext);
                                 ActiveDbDaemons.TryRemove(data.ProcessID, out removedContext);
+                                ProcessCmdLines.TryRemove(data.ProcessID, out removedContext);
                             }
 
                             if (data.EventName.Contains("Start")) {
@@ -669,6 +691,22 @@ public class RealTimeC2Sensor {
                 _session.Source.Process();
             } catch (Exception ex) {
                 EventQueue.Enqueue(new C2Event { Error = EscapeJson(ex.Message) });
+            }
+        });
+
+        // Telemetry Blinding - Background Watchdog for ETW Buffer Exhaustion
+        Task.Run(async () => {
+            while (IsSessionHealthy()) {
+                await Task.Delay(2000); // Check every 2 seconds
+                if (_session != null && _session.EventsLost > _lastEventsLost) {
+                    int dropped = _session.EventsLost - _lastEventsLost;
+                    _lastEventsLost = _session.EventsLost;
+
+                    EventQueue.Enqueue(new C2Event { 
+                        Provider = "DiagLog", 
+                        Message = $"SENSOR_BLINDING_DETECTED:{dropped}" 
+                    });
+                }
             }
         });
     }

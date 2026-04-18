@@ -328,7 +328,7 @@ Initialize-TamperGuard
 
 function Lock-SecureDirectory([string]$Path) {
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
-    
+
     $acl = Get-Acl $Path
     $acl.SetAccessRuleProtection($true, $false)
     $sysRule = New-Object System.Security.AccessControl.FileSystemAccessRule("NT AUTHORITY\SYSTEM", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
@@ -945,12 +945,12 @@ if ((Test-Path $dllSrc) -and (Test-Path $hashSrc)) {
     Write-Diag "Verifying FFI Engine cryptographic integrity..." "STARTUP"
     $expectedHash = (Get-Content $hashSrc -Raw).Trim()
     $actualHash = (Get-FileHash $dllSrc -Algorithm SHA256).Hash
-    
+
     if ($expectedHash -ne $actualHash) {
         Write-Diag "FATAL PIPELINE ERROR: c2sensor_ml.dll SHA256 Integrity Check Failed!" "CRITICAL"
         throw "FATAL: c2sensor_ml.dll has been tampered with."
     }
-    
+
     Move-Item -Path $dllSrc -Destination $dllDest -Force
     Move-Item -Path $hashSrc -Destination (Join-Path $BinPath "c2sensor_ml.sha256") -Force
     Write-Diag "FFI DLL (SHA256: $actualHash) integrity verified and locked in \Bin." "STARTUP"
@@ -983,9 +983,29 @@ Write-Diag "Initiating 20-second JIT compilation and RAM stabilization phase..."
 Write-Diag "    [*] Initializing Math Engine and pre-compiling native FFI pointers..." "STARTUP"
 Write-Host "[*] Stabilizing memory footprint (20-second cooldown)..." -ForegroundColor Green
 
-Write-Host "Call trans opt: received. 2-19-98 13:24:18 REC:Loc" -ForegroundColor Green
+$ESC = [char]27
+$cGreen     = "$ESC[38;2;57;255;20m"
+$cDarkGreen = "$ESC[38;2;15;90;10m"
+$cReset     = "$ESC[0m"
+
+$cursor = "█"
+
+foreach ($char in "Call trans opt: received. 2-19-98 13:24:18 REC:Loc".ToCharArray()) {
+    Write-Host "$cGreen$char" -NoNewline
+    Write-Host "$cDarkGreen$cursor" -NoNewline
+    Start-Sleep -Milliseconds 60
+    Write-Host "`b `b" -NoNewline
+}
+Write-Host ""
 Start-Sleep -Milliseconds 1200
-Write-Host "Trace program: running`n" -ForegroundColor Green
+
+foreach ($char in "Trace program: running".ToCharArray()) {
+    Write-Host "$cGreen$char" -NoNewline
+    Write-Host "$cDarkGreen$cursor" -NoNewline
+    Start-Sleep -Milliseconds 60
+    Write-Host "`b `b" -NoNewline
+}
+Write-Host "`n"
 Start-Sleep -Milliseconds 2400
 
 [System.GC]::Collect()
@@ -999,7 +1019,7 @@ $startY = [Console]::CursorTop + 1
 if ($startY -ge $floorY - 5) { $startY = 15 }
 
 $columns = @(0) * $width
-Write-Host "$([char]27)[?25l" -NoNewline
+Write-Host "$ESC[?25l" -NoNewline
 
 while (((Get-Date) - $matrixStart).TotalSeconds -lt 20) {
     for ($i = 0; $i -lt $width; $i++) {
@@ -1012,11 +1032,11 @@ while (((Get-Date) - $matrixStart).TotalSeconds -lt 20) {
 
             if ($y -lt $floorY) {
                 [Console]::SetCursorPosition($i, $y)
-                Write-Host ([char](Get-Random -Minimum 33 -Maximum 126)) -ForegroundColor Green -NoNewline
+                Write-Host "$cGreen$([char](Get-Random -Minimum 33 -Maximum 126))" -NoNewline
 
                 if ($y -gt $startY + 1) {
                     [Console]::SetCursorPosition($i, $y - 1)
-                    Write-Host ([char](Get-Random -Minimum 33 -Maximum 126)) -ForegroundColor DarkGreen -NoNewline
+                    Write-Host "$cDarkGreen$([char](Get-Random -Minimum 33 -Maximum 126))" -NoNewline
                 }
 
                 if ($y -gt $startY + 6) {
@@ -1045,7 +1065,7 @@ for ($y = 0; $y -lt 36; $y++) {
     Write-Host (" " * $width) -NoNewline
 }
 
-Write-Host "$([char]27)[?25h" -NoNewline
+Write-Host "$ESC[?25h$cReset" -NoNewline 
 [Console]::SetCursorPosition(0, 0)
 Write-Diag "Stabilization complete. Memory optimized. Starting event loop." "STARTUP"
 # ==================================================================================
@@ -1070,7 +1090,7 @@ try {
                     if ($evt.Message -match "SENSOR_BLINDING_DETECTED:(\d+)") {
                         $dropped = $matches[1]
                         $blindJson = "{`"ThreatIntel`":`"CRITICAL: SENSOR BLINDING (ETW Buffer Exhaustion). Dropped $dropped Events.`"}"
-                        
+
                         Submit-SensorAlert -Type "ML_Beacon" `
                             -Destination "Localhost" `
                             -Image "Windows_Kernel" `

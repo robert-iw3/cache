@@ -386,7 +386,7 @@ impl BehavioralEngine {
 
         let mut flags = Vec::new();
         let observed_duration: f64 = flow.intervals.iter().sum();
-        
+
         let (mean_int, std_int) = MathEngine::calculate_mean_std(&flow.intervals);
         let cv_interval = if mean_int > 0.0 { std_int / mean_int } else { 0.0 };
 
@@ -662,20 +662,28 @@ pub extern "C" fn evaluate_telemetry(engine_ptr: *mut Mutex<BehavioralEngine>, j
         return make_error_response("FFI: Null pointer received");
     }
 
-    let c_str = unsafe { CStr::from_ptr(json_payload) };
-    let json_str = match c_str.to_str() {
-        Ok(s) => s,
-        Err(_) => return make_error_response("FFI: Invalid UTF-8 in payload"),
-    };
-
-    let events: Vec<IncomingTelemetry> = match serde_json::from_str(json_str) {
-        Ok(e) => e,
-        Err(e) => return make_error_response(&format!("JSON parse error: {}", e)),
-    };
-
     let engine_mutex = unsafe { &*engine_ptr };
 
+    // Wrap EVERYTHING (including JSON parsing) inside the panic catcher
     let result = std::panic::catch_unwind(|| {
+        let c_str = unsafe { CStr::from_ptr(json_payload) };
+        let payload_bytes = c_str.to_bytes();
+
+        // CWE-400 HARD LIMIT - Reject payloads over 1MB before string allocation
+        if payload_bytes.len() > 1_048_576 {
+            return Err("CRITICAL: FFI Payload exceeds 1MB safety threshold".to_string());
+        }
+
+        let json_str = match std::str::from_utf8(payload_bytes) {
+            Ok(s) => s,
+            Err(_) => return Err("FFI: Invalid UTF-8 in payload".to_string()),
+        };
+
+        let events: Vec<IncomingTelemetry> = match serde_json::from_str(json_str) {
+            Ok(e) => e,
+            Err(e) => return Err(format!("JSON parse error: {}", e)),
+        };
+
         let mut engine = match engine_mutex.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -687,12 +695,11 @@ pub extern "C" fn evaluate_telemetry(engine_ptr: *mut Mutex<BehavioralEngine>, j
                 batch_alerts.push(alert);
             }
         }
-        batch_alerts
+        Ok(batch_alerts)
     });
 
     match result {
-        Ok(mut alerts) if !alerts.is_empty() => {
-            // Drop everything below 90% confidence.
+        Ok(Ok(mut alerts)) => {
             alerts.retain(|a| a.confidence >= 90.0);
 
             if alerts.is_empty() {
@@ -708,14 +715,13 @@ pub extern "C" fn evaluate_telemetry(engine_ptr: *mut Mutex<BehavioralEngine>, j
 
             match serde_json::to_string(&response) {
                 Ok(resp_str) => {
-                    // Strip ETW null-byte poisoning before crossing the C-ABI
                     let clean_str = resp_str.replace('\0', "");
                     CString::new(clean_str).unwrap_or_else(|_| CString::new("{}").unwrap()).into_raw()
                 },
                 Err(e) => make_error_response(&format!("Serialization error: {}", e)),
             }
-        }
-        Ok(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(err_msg)) => make_error_response(&err_msg), // Handled internal limit/parse errors
         Err(panic_info) => {
             let msg = match panic_info.downcast_ref::<String>() {
                 Some(s) => s.clone(),

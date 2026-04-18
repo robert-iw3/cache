@@ -131,7 +131,7 @@ $FinalDest = Join-Path $WorkingDir $FinalBinaryName
 
 if (Test-Path $CompiledDll) {
     Copy-Item -Path $CompiledDll -Destination $FinalDest -Force
-    
+
     $HashVal = (Get-FileHash $FinalDest -Algorithm SHA256).Hash
     $HashDest = Join-Path $WorkingDir ($FinalBinaryName -replace "\.dll$", ".sha256")
     $HashVal | Out-File -FilePath $HashDest -Encoding ascii -NoNewline
