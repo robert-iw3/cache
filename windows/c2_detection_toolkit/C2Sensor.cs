@@ -2,7 +2,7 @@
  * SYSTEM:          C2 Beacon Sensor - Active Defense / Infrastructure Exploitation
  * COMPONENT:       C2Sensor.cs (Unmanaged ETW Engine & FFI Bridge)
  * AUTHOR:          Robert Weber
- * VERSION:         2.0
+ * VERSION:         1.0
  * * DESCRIPTION:
  * A high-performance, real-time Event Tracing for Windows (ETW) listener compiled
  * natively into the PowerShell runspace. Incorporates Native FFI boundaries

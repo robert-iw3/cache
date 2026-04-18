@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Windows Kernel C2 Beacon Sensor v2.0 beta (Native FFI Architecture)
+    Windows Kernel C2 Beacon Sensor v1.0 (Native FFI Architecture)
 .DESCRIPTION
     A high-performance, real-time Command and Control (C2) detection and response engine.
     It injects Microsoft.Diagnostics.Tracing.TraceEvent directly into RAM via embedded C#
@@ -285,7 +285,7 @@ function Draw-StartupWindow {
     [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
-Write-Diag "=== C2 SENSOR V2 DIAGNOSTIC LOG INITIALIZED ===" "STARTUP"
+Write-Diag "=== C2 SENSOR V1 DIAGNOSTIC LOG INITIALIZED ===" "STARTUP"
 Write-Diag "Host: $env:COMPUTERNAME | PS Version: $($PSVersionTable.PSVersion.ToString())" "STARTUP"
 
 if ($ArmedMode) {
@@ -767,7 +767,7 @@ function Draw-MonitorDashboard([int]$Events, [int]$Flows, [int]$Lateral, [int]$M
     $sysguardPad = $SysGuard.PadRight(9)
     $defFired = $Mitigations.ToString().PadRight(9)
 
-    $TitlePlain = "  ⚡ C2 Beacon Sensor v2.0 | NetFlow Observability Dashboard"
+    $TitlePlain = "  ⚡ C2 Beacon Sensor v1.0 | NetFlow Observability Dashboard"
     $StatusStr  = "  [ LIVE TELEMETRY ]"
     $Stats1Str  = "  Events Processed : $evPad | Active Egress  : $egressPad | Lateral P2P : $latPad"
     $Stats2Str  = "  ML Sent/Eval     : $mlPad | Active Alerts  : $Alerts"
@@ -787,7 +787,7 @@ function Draw-MonitorDashboard([int]$Events, [int]$Flows, [int]$Lateral, [int]$M
     $GuardColor  = if ($SysGuard -eq "Secure") { $cGreen } else { $cRed }
 
     Write-Host "$cCyan╔════════════════════════════════════════════════════════════════════════════════════════════════════╗$cReset"
-    Write-Host "$cCyan║$cReset  $cGold⚡ C2 Beacon Sensor v2.0$cReset | NetFlow Observability Dashboard$PadTitle$cCyan║$cReset"
+    Write-Host "$cCyan║$cReset  $cGold⚡ C2 Beacon Sensor v1.0$cReset | NetFlow Observability Dashboard$PadTitle$cCyan║$cReset"
     Write-Host "$cCyan╠════════════════════════════════════════════════════════════════════════════════════════════════════╣$cReset"
     Write-Host "$cCyan║$cReset  $cOrange[ LIVE TELEMETRY ]$cReset$PadStatus$cCyan║$cReset"
     Write-Host "$cCyan║$cReset  Events Processed : $cCyan$evPad$cReset | Active Egress  : $cRed$egressPad$cReset | Lateral P2P : $cOrange$latPad$cReset$PadStats1$cCyan║$cReset"
