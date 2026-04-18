@@ -43,6 +43,10 @@
 #>
 #Requires -RunAsAdministrator
 
+# ======================================================================
+# 1. PARAMETERS
+# ======================================================================
+
 param (
     [switch]$ArmedMode,
     [switch]$EnableDiagnostics,
@@ -55,32 +59,70 @@ param (
     [string]$TraceEventDllPath = "C:\ProgramData\DeepSensor\Dependencies\TE\lib\net45\Microsoft.Diagnostics.Tracing.TraceEvent.dll"
 )
 
-# DEVELOPER NOTE: O(1) Exclusions for Alternate Data Streams (ADS)
-$BenignADSProcs = @(
-    "coreserviceshell.exe",
-    "explorer.exe",
-    "msedge.exe",
-    "chrome.exe",
-    "onedrive.exe"
-)
-
-# DEVELOPER NOTE: O(1) Exclusions for Registry Noise
-$BenignExplorerValues = @(
-    "Zvpebfbsg.Jvaqbjf.Rkcybere",
-    "HRZR_PGYFRFFVBA",
-    "IdleInWorkingState",
-    "WritePermissionsCheck",
-    "GlobalUserStartTime"
-)
-
-# Environmental Noise Filter
-$TrustedProcessExclusions = @(
-    "svchost.exe", "wmiprvse.exe", "taskhostw.exe", "dllhost.exe",
-    "backgroundtaskhost.exe", "coreserviceshell.exe", "asussystemanalysis.exe",
-    "samsungmagician.exe", "msedge.exe", "chrome.exe"
-)
-
+# --- Clear Trace ---
 logman stop "NT Kernel Logger" -ets >$null 2>&1
+
+# ======================================================================
+# 2. GLOBAL CONSTANTS & PATHS
+# ======================================================================
+
+$Global:ProgData = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
+$global:EnrichmentPrefix = "`"ComputerName`":`"$env:COMPUTERNAME`", `"IP`":`"$IpAddress`", `"OS`":`"$OsContext`", `"SensorUser`":`"$userStr`", "
+$global:ComputerName = $env:COMPUTERNAME
+$global:HostIP = $IpAddress
+$global:SensorUser = $userStr
+$global:cycleAlerts = [System.Collections.Generic.Dictionary[string, object]]::new()
+$global:dataBatch = [System.Collections.Generic.List[PSCustomObject]]::new()
+$global:IsArmed = $ArmedMode
+if ($ArmedMode) {
+    Write-Host "`n[!] SENSOR BOOTING IN ARMED MODE: ACTIVE DEFENSE ENABLED" -ForegroundColor Red
+} else {
+    Write-Host "`n[*] SENSOR BOOTING IN AUDIT MODE: OBSERVATION ONLY" -ForegroundColor Yellow
+}
+$global:RecentAlerts = [System.Collections.Generic.List[PSCustomObject]]::new()
+$global:StartupLogs = [System.Collections.Generic.List[string]]::new()
+$global:TotalMitigations = 0
+
+$script:logBatch = [System.Collections.Generic.List[string]]::new()
+# Dedicated UEBA JSONL pipeline
+$script:uebaBatch = [System.Collections.Generic.List[string]]::new()
+$UebaLogPath = $LogPath -replace "DeepSensor_Events.jsonl", "DeepSensor_UEBA_Events.jsonl"
+
+$ScriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($ScriptDir)) {
+    if ($PSCommandPath) { $ScriptDir = Split-Path $PSCommandPath -Parent }
+    else { $ScriptDir = $PWD.Path }
+}
+
+$LogDir = Join-Path $env:ProgramData "DeepSensor\Logs"
+$DiagLogPath = Join-Path $LogDir "DeepSensor_Diagnostic.log"
+
+if (-not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+
+if (Test-Path $DiagLogPath) {
+    Remove-Item -Path $DiagLogPath -Force -ErrorAction SilentlyContinue
+}
+
+# ======================================================================
+# 3. HELPER FUNCTIONS
+# ======================================================================
+
+function Write-Diag([string]$Message, [string]$Level = "INFO") {
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
+    try {
+        if (-not (Test-Path $LogDir)) {
+            New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+        }
+        Add-Content -Path $DiagLogPath -Value "[$ts] [$Level] $Message" -Encoding UTF8
+    } catch {}
+
+    if ($Level -eq "STARTUP") {
+        $global:StartupLogs.Add($Message)
+        Draw-StartupWindow
+    }
+}
 
 # ====================== SIEM ENRICHMENT METADATA ======================
 $activeRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
@@ -91,21 +133,9 @@ if (-not $IpAddress) { $IpAddress = "Unknown" }
 $OsContext = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption -replace 'Microsoft ', ''
 $userStr = "$env:USERDOMAIN\$env:USERNAME".Replace("\", "\\")
 
-$global:EnrichmentPrefix = "`"ComputerName`":`"$env:COMPUTERNAME`", `"IP`":`"$IpAddress`", `"OS`":`"$OsContext`", `"SensorUser`":`"$userStr`", "
 # ======================================================================
-
-$global:IsArmed = $ArmedMode
-if ($ArmedMode) {
-    Write-Host "`n[!] SENSOR BOOTING IN ARMED MODE: ACTIVE DEFENSE ENABLED" -ForegroundColor Red
-} else {
-    Write-Host "`n[*] SENSOR BOOTING IN AUDIT MODE: OBSERVATION ONLY" -ForegroundColor Yellow
-}
-$ScriptDir = Split-Path $PSCommandPath -Parent
-
-$script:logBatch = [System.Collections.Generic.List[string]]::new()
-# Dedicated UEBA JSONL pipeline
-$script:uebaBatch = [System.Collections.Generic.List[string]]::new()
-$UebaLogPath = $LogPath -replace "DeepSensor_Events.jsonl", "DeepSensor_UEBA_Events.jsonl"
+# 4. HUD / UI RENDERING
+# ======================================================================
 
 # Disable Windows QuickEdit Mode to prevent accidental process freezing
 $QuickEditCode = @"
@@ -130,356 +160,6 @@ public class ConsoleConfig {
 "@
 Add-Type -TypeDefinition $QuickEditCode
 [ConsoleConfig]::DisableQuickEdit()
-
-# ====================== DIAGNOSTICS & TAMPER GUARD ======================
-$LogDir = Join-Path $env:ProgramData "DeepSensor\Logs"
-$DiagLogPath = Join-Path $LogDir "DeepSensor_Diagnostic.log"
-
-if (-not (Test-Path $LogDir)) {
-    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-}
-
-if (Test-Path $DiagLogPath) {
-    Remove-Item -Path $DiagLogPath -Force -ErrorAction SilentlyContinue
-}
-
-$global:StartupLogs = [System.Collections.Generic.List[string]]::new()
-
-function Write-Diag([string]$Message, [string]$Level = "INFO") {
-    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
-    try {
-        if (-not (Test-Path $LogDir)) {
-            New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-        }
-        Add-Content -Path $DiagLogPath -Value "[$ts] [$Level] $Message" -Encoding UTF8
-    } catch {}
-
-    if ($Level -eq "STARTUP") {
-        $global:StartupLogs.Add($Message)
-        Draw-StartupWindow
-    }
-}
-
-function Invoke-EnvironmentalAudit {
-    Write-Diag "    [*] Initializing Environmental Audit..." "STARTUP"
-    Write-Diag "        [*] Executing Proactive Posture & WMI Sweep..." "STARTUP"
-
-    $lsa = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -ErrorAction SilentlyContinue
-    if (-not $lsa -or $lsa.RunAsPPL -ne 1) {
-        Write-Diag "[POSTURE] Vulnerability: LSASS is not running as a Protected Process Light (PPL)." "AUDIT"
-    }
-
-    $rdp = Get-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -ErrorAction SilentlyContinue
-    if ($rdp -and $rdp.fDenyTSConnections -eq 0) {
-        Write-Diag "[POSTURE] Vulnerability: RDP is currently enabled and exposed." "AUDIT"
-    }
-
-    try {
-        $consumers = Get-WmiObject -Namespace "root\subscription" -Class CommandLineEventConsumer -ErrorAction Stop
-        foreach ($c in $consumers) {
-            if ($c.CommandLineTemplate -match "powershell|cmd|wscript|cscript") {
-                Write-Diag "[THREAT HUNT] Suspicious WMI Event Consumer Found: $($c.Name) -> $($c.CommandLineTemplate)" "CRITICAL"
-            }
-        }
-    } catch { }
-}
-
-function Invoke-HostIsolation {
-    param([string]$Reason, [string]$TriggeringProcess)
-
-    if (-not $ArmedMode) {
-        Write-Diag "[AUDIT MODE] Host Isolation bypassed for: $Reason ($TriggeringProcess)" "CRITICAL"
-        return
-    }
-
-    Write-Host "`n[!] CRITICAL THREAT DETECTED: INITIATING HOST ISOLATION" -ForegroundColor Red
-    Write-Host "    Reason: $Reason ($TriggeringProcess)" -ForegroundColor Yellow
-
-    try {
-        Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction Block -DefaultOutboundAction Block -ErrorAction Stop
-        New-NetFirewallRule -DisplayName "DeepSensor_Safe_Uplink" -Direction Outbound -Action Allow -RemoteAddress "10.0.0.50" -ErrorAction SilentlyContinue | Out-Null
-        Write-Diag "[ACTIVE DEFENSE] Host isolated from network via Firewall. Safe Uplink preserved." "CRITICAL"
-    } catch {
-        Write-Diag "[ACTIVE DEFENSE ERROR] Failed to enforce firewall quarantine: $($_.Exception.Message)" "CRITICAL"
-    }
-}
-
-function Protect-SensorEnvironment {
-    Write-Diag "[*] Hardening Sensor Ecosystem (DACLs & Registry)..." "STARTUP"
-
-    $DataDir = "C:\ProgramData\DeepSensor\Data"
-    if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
-
-    $PathsToLock = @($ScriptDir, (Join-Path $ScriptDir $MlBinaryName), (Join-Path $ScriptDir "sigma"))
-    foreach ($p in $PathsToLock) {
-        if (Test-Path $p) {
-            icacls $p /inheritance:d /q *>$null
-            icacls $p /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q *>$null
-            icacls $p /grant "BUILTIN\Administrators:(OI)(CI)RX" /q *>$null
-            icacls $p /deny "BUILTIN\Administrators:(OI)(CI)W" /q *>$null
-        }
-    }
-
-    if (Test-Path $DataDir) {
-        $currentUser = "$env:USERDOMAIN\$env:USERNAME"
-
-        icacls $DataDir /inheritance:d /q *>$null
-        icacls $DataDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q *>$null
-        icacls $DataDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q *>$null
-        icacls $DataDir /grant "${currentUser}:(OI)(CI)M" /q *>$null
-
-        if ($null -ne $ReadAccessAccounts) {
-            foreach ($account in $ReadAccessAccounts) {
-                if (-not [string]::IsNullOrWhiteSpace($account)) {
-                    icacls $DataDir /grant "${account}:(OI)(CI)RX" /q *>$null
-                }
-            }
-        }
-        icacls $DataDir /remove "BUILTIN\Users" /q 2>$null *>$null
-    }
-
-    Write-Diag "    [+] Discretionary Access Control Lists (DACLs) locked down." "STARTUP"
-
-    $ServiceName = "DeepSensorService"
-    $serviceExists = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($serviceExists) {
-        $secureSddl = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWLOCRRC;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
-        $null = & sc.exe sdset $ServiceName $secureSddl
-        Write-Diag "    [+] Windows Service configuration secured." "STARTUP"
-    }
-}
-
-# ====================== ENVIRONMENT BOOTSTRAP (RUST NATIVE DLL) ======================
-function Initialize-Environment {
-    Write-Diag "[*] Executing Environment Pre-Flight Checks..." "STARTUP"
-    $MlBinaryPath = Join-Path $ScriptDir $MlBinaryName
-    $binaryReady = $false
-
-    if (Test-Path $MlBinaryPath) {
-        $binaryReady = $true
-        Write-Diag "    [+] Deep Visibility Native Rust DLL validated." "STARTUP"
-    } else {
-        Write-Diag "    [-] ML DLL absent. Initiating offline deployment..." "STARTUP"
-        try {
-            if ($OfflineRepoPath) {
-                Write-Diag "    [*] Fetching ML DLL from offline repository..." "STARTUP"
-                Copy-Item (Join-Path $OfflineRepoPath $MlBinaryName) -Destination $MlBinaryPath -Force
-            }
-            if (Test-Path $MlBinaryPath) {
-                Write-Diag "    [+] ML DLL deployed successfully." "STARTUP"
-                $binaryReady = $true
-            } else { Write-Diag "    [!] ML DLL deployment failed." "STARTUP" }
-        } catch { Write-Diag "    [!] ML DLL acquisition failed: $($_.Exception.Message)" "STARTUP" }
-    }
-
-    if (-not $binaryReady) { throw "CRITICAL: Unable to provision the ML engine DLL." }
-    return $MlBinaryPath
-}
-
-function Initialize-TraceEventDependency {
-    param([string]$ExtractBase = "C:\ProgramData\DeepSensor\Dependencies")
-
-    Write-Diag "Validating C# ETW Dependencies..." "STARTUP"
-    $ExpectedDllName = "Microsoft.Diagnostics.Tracing.TraceEvent.dll"
-
-    $ExistingDll = Get-ChildItem -Path $ExtractBase -Filter $ExpectedDllName -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-
-    if ($ExistingDll) {
-        $DllDir = Split-Path $ExistingDll.FullName -Parent
-        $FastSerPath = Join-Path $DllDir "Microsoft.Diagnostics.FastSerialization.dll"
-        $YaraPath = Join-Path $DllDir "libyara.NET.dll"
-
-        # Flatten unmanaged DLLs on fast-restart
-        $Amd64Dir = Join-Path $DllDir "amd64"
-        if (Test-Path $Amd64Dir) {
-            $UnmanagedToFlatten = @("KernelTraceControl.dll", "msdia140.dll", "yara.dll")
-            foreach ($lib in $UnmanagedToFlatten) {
-                $src = Join-Path $Amd64Dir $lib
-                $dst = Join-Path $DllDir $lib
-                if ((Test-Path $src) -and -not (Test-Path $dst)) {
-                    Copy-Item -Path $src -Destination $dst -Force
-                }
-            }
-        }
-
-        if ((Test-Path $FastSerPath) -and (Test-Path $YaraPath)) {
-            Write-Diag "[+] TraceEvent and Context-Aware YARA libraries validated." "STARTUP"
-            return $ExistingDll.FullName
-        }
-    }
-
-    Write-Diag "[-] TraceEvent library absent. Initiating silent deployment..." "STARTUP"
-    try {
-        if (Test-Path $ExtractBase) { Remove-Item $ExtractBase -Recurse -Force -ErrorAction SilentlyContinue }
-        New-Item -ItemType Directory -Path $ExtractBase -Force | Out-Null
-
-        $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
-        if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
-
-        $TE_Zip = "$SecureStaging\TE.zip"
-        $UN_Zip = "$SecureStaging\UN.zip"
-
-        if ($OfflineRepoPath) {
-            Copy-Item (Join-Path $OfflineRepoPath "traceevent.nupkg") -Destination $TE_Zip -Force
-            Copy-Item (Join-Path $OfflineRepoPath "unsafe.nupkg") -Destination $UN_Zip -Force
-        } else {
-            $TE_Url = "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.2"
-            $UN_Url = "https://www.nuget.org/api/v2/package/System.Runtime.CompilerServices.Unsafe/5.0.0"
-            Invoke-WebRequest -Uri $TE_Url -OutFile $TE_Zip -UseBasicParsing
-            Invoke-WebRequest -Uri $UN_Url -OutFile $UN_Zip -UseBasicParsing
-        }
-
-        Expand-Archive -Path $TE_Zip -DestinationPath "$ExtractBase\TE" -Force
-        Expand-Archive -Path $UN_Zip -DestinationPath "$ExtractBase\UN" -Force
-        Remove-Item $TE_Zip, $UN_Zip -Force -ErrorAction SilentlyContinue
-
-        $YARA_Zip = "$SecureStaging\YARA.zip"
-        if ($OfflineRepoPath) {
-            Copy-Item (Join-Path $OfflineRepoPath "libyaranet.nupkg") -Destination $YARA_Zip -Force
-        } else {
-            Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/libyara.NET/3.5.2" -OutFile $YARA_Zip -UseBasicParsing
-        }
-        Expand-Archive -Path $YARA_Zip -DestinationPath "$ExtractBase\YARA" -Force
-        Remove-Item $YARA_Zip -Force -ErrorAction SilentlyContinue
-
-        $FoundDll = Get-ChildItem -Path "$ExtractBase\TE" -Filter $ExpectedDllName -Recurse -ErrorAction SilentlyContinue |
-                    Where-Object { $_.FullName -match "net462|netstandard|net45" } | Select-Object -First 1
-
-        if ($FoundDll) {
-            $DllDir = Split-Path $FoundDll.FullName -Parent
-            $UnsafeDll = Get-ChildItem -Path "$ExtractBase\UN" -Filter "System.Runtime.CompilerServices.Unsafe.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "net45|netstandard|net46" } | Select-Object -First 1
-            if ($UnsafeDll) { Copy-Item -Path $UnsafeDll.FullName -Destination $DllDir -Force }
-
-            $Amd64Dir = Join-Path $DllDir "amd64"
-            if (-not (Test-Path $Amd64Dir)) { New-Item -ItemType Directory -Path $Amd64Dir -Force | Out-Null }
-
-            $NativeHelpers = @(
-                (Get-ChildItem -Path "$ExtractBase\TE" -Filter "KernelTraceControl.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1),
-                (Get-ChildItem -Path "$ExtractBase\TE" -Filter "msdia140.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1)
-            )
-
-            foreach ($h in $NativeHelpers) {
-                if ($h) {
-                    Copy-Item -Path $h.FullName -Destination $Amd64Dir -Force
-                    Copy-Item -Path $h.FullName -Destination $DllDir -Force
-                }
-            }
-
-            $ManagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "libyara.NET.dll" -Recurse | Select-Object -First 1
-            $UnmanagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "yara.dll" -Recurse | Where-Object { $_.FullName -match "win-x64" } | Select-Object -First 1
-
-            if ($ManagedYara) { Copy-Item -Path $ManagedYara.FullName -Destination $DllDir -Force }
-            if ($UnmanagedYara) {
-                Copy-Item -Path $UnmanagedYara.FullName -Destination $Amd64Dir -Force
-                Copy-Item -Path $UnmanagedYara.FullName -Destination $DllDir -Force
-            }
-
-            Write-Diag "[+] TraceEvent library deployed successfully." "STARTUP"
-            return $FoundDll.FullName
-        } else {
-            throw "DLL not found within extracted package structure."
-        }
-    } catch {
-        Write-Diag "[!] TraceEvent deployment failed: $($_.Exception.Message)" "STARTUP"
-        return $null
-    }
-}
-
-# ====================== ACTIVE DEFENSE ENGINE ======================
-$global:TotalMitigations = 0
-
-function Invoke-ActiveDefense([string]$ProcName, [int]$PID_Id, [int]$TID_Id, [string]$TargetType, [string]$Reason) {
-    if (-not $global:IsArmed -or $ProcName -match "Unknown|System|Idle") { return }
-
-    # 1. THE ANTI-BSOD & BUSINESS CONTINUITY GATEKEEPER
-    $BSOD_Risks = @("csrss.exe", "lsass.exe", "smss.exe", "services.exe", "wininit.exe", "winlogon.exe", "svchost.exe", "dwm.exe", "explorer.exe")
-    if ($BSOD_Risks -contains $ProcName.ToLower()) {
-        Write-Diag "[ACTIVE DEFENSE] Skipped termination of $ProcName to prevent OS BSOD." "WARNING"
-        Add-AlertMessage "DEFENSE ABORTED: OS Critical Process ($ProcName)" "$([char]27)[95;40m"
-        return
-    }
-
-    $containmentStatus = "Failed"
-    $forensicArtifact = "None"
-
-    # 2. FORENSIC PRESERVATION
-    $dumpPath = [DeepVisibilitySensor]::PreserveForensics($PID_Id, $ProcName)
-    if ($dumpPath -ne "Failed" -and $dumpPath -ne "AccessDenied" -and $dumpPath -ne "Bypassed") {
-        $forensicArtifact = $dumpPath
-    }
-
-    # 3. CONTAINMENT EXECUTION (Prefer Thread Quarantine for safe rollback)
-    if ($TargetType -eq "Thread" -and $TID_Id -gt 0) {
-        $res = [DeepVisibilitySensor]::QuarantineNativeThread($TID_Id, $PID_Id)
-        if ($res) {
-            $containmentStatus = "Thread ($TID_Id) Quarantined"
-            $global:TotalMitigations++
-        }
-    }
-    else {
-        Stop-Process -Id $PID_Id -Force -ErrorAction SilentlyContinue
-        if (-not (Get-Process -Id $PID_Id -ErrorAction SilentlyContinue)) {
-            $containmentStatus = "Process ($PID_Id) Terminated"
-            $global:TotalMitigations++
-        }
-    }
-
-    # 4. INCIDENT REPORTING
-    $ReportDir = "C:\ProgramData\DeepSensor\Data\Reports"
-    if (-not (Test-Path $ReportDir)) { New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null }
-    $ReportId = [guid]::NewGuid().ToString().Substring(0,8)
-
-    $IncidentReport = @{
-        IncidentID = $ReportId
-        Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-        Process = $ProcName
-        PID = $PID_Id
-        TID = $TID_Id
-        TriggerReason = $Reason
-        ActionTaken = $containmentStatus
-        ForensicsSavedAt = $forensicArtifact
-    }
-    $IncidentReport | ConvertTo-Json -Depth 4 | Out-File "$ReportDir\Incident_${ReportId}.json"
-
-    $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"$containmentStatus`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"ReportID`":`"$ReportId`"}"
-    $script:logBatch.Add($audit)
-
-    Add-AlertMessage "DEFENSE: $containmentStatus ($ProcName)" "$([char]27)[93;40m"
-}
-
-function Invoke-DefenseRollback {
-    Write-Host "`n[!] INITIATING ACTIVE DEFENSE ROLLBACK..." -ForegroundColor Cyan
-
-    # 1. Lift Host Isolation (Firewall)
-    try {
-        Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction NotConfigured -DefaultOutboundAction NotConfigured -ErrorAction Stop
-        Remove-NetFirewallRule -DisplayName "DeepSensor_Safe_Uplink" -ErrorAction SilentlyContinue
-        Write-Diag "[ROLLBACK] Network Host Isolation lifted." "INFO"
-        Add-AlertMessage "ROLLBACK: Network Isolation Lifted" "$([char]27)[96;40m"
-    } catch { Write-Diag "[ROLLBACK] Network restore failed: $($_.Exception.Message)" "ERROR" }
-
-    # 2. Look for recently suspended threads in our audit log and resume them
-    # Note: In a full enterprise UI, you would select the specific TID. Here we use a safe heuristic for the last action.
-    $LastSuspendedTid = 0
-    # Search backwards through the log batch for the last quarantined thread
-    for ($i = $script:logBatch.Count - 1; $i -ge 0; $i--) {
-        if ($script:logBatch[$i] -match "`"Action`":`"Thread \((\d+)\) Quarantined`"") {
-            $LastSuspendedTid = [int]$matches[1]
-            break
-        }
-    }
-
-    if ($LastSuspendedTid -gt 0) {
-        $res = [DeepVisibilitySensor]::ResumeNativeThread($LastSuspendedTid)
-        if ($res) {
-            Write-Diag "[ROLLBACK] Successfully resumed Native Thread $LastSuspendedTid." "INFO"
-            Add-AlertMessage "ROLLBACK: Thread $LastSuspendedTid Resumed" "$([char]27)[96;40m"
-        }
-    } else {
-        Add-AlertMessage "ROLLBACK: No suspended threads found in active queue." "$([char]27)[90;40m"
-    }
-    Start-Sleep -Seconds 2
-}
 
 # ====================== HUD DASHBOARD RENDERING ======================
 $Host.UI.RawUI.BackgroundColor = 'Black'
@@ -512,8 +192,6 @@ try {
 } catch {}
 
 [Console]::SetCursorPosition(0, 9)
-
-$global:RecentAlerts = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 function Add-AlertMessage([string]$Message, [string]$ColorCode) {
     $ts = (Get-Date).ToString("HH:mm:ss"); $prefix = "[$ts] "
@@ -661,48 +339,520 @@ function Draw-StartupWindow {
     [Console]::SetCursorPosition($curLeft, $curTop)
 }
 
-# ====================== YARA RULES ======================
+# ======================================================================
+# 5. ACTIVE DEFENSE & RESPONSE FUNCTIONS
+# ======================================================================
+function Invoke-ActiveDefense([string]$ProcName, [int]$PID_Id, [int]$TID_Id, [string]$TargetType, [string]$Reason) {
+    if (-not $global:IsArmed -or $ProcName -match "Unknown|System|Idle") { return }
+
+    # 1. THE ANTI-BSOD & BUSINESS CONTINUITY GATEKEEPER
+    $BSOD_Risks = @("csrss.exe", "lsass.exe", "smss.exe", "services.exe", "wininit.exe", "winlogon.exe", "svchost.exe", "dwm.exe", "explorer.exe")
+    if ($BSOD_Risks -contains $ProcName.ToLower()) {
+        Write-Diag "[ACTIVE DEFENSE] Skipped termination of $ProcName to prevent OS BSOD." "WARNING"
+        Add-AlertMessage "DEFENSE ABORTED: OS Critical Process ($ProcName)" "$([char]27)[95;40m"
+        return
+    }
+
+    $containmentStatus = "Failed"
+    $forensicArtifact = "None"
+
+    # 2. FORENSIC PRESERVATION
+    $dumpPath = [DeepVisibilitySensor]::PreserveForensics($PID_Id, $ProcName)
+    if ($dumpPath -ne "Failed" -and $dumpPath -ne "AccessDenied" -and $dumpPath -ne "Bypassed") {
+        $forensicArtifact = $dumpPath
+    }
+
+    # 3. CONTAINMENT EXECUTION (Prefer Thread Quarantine for safe rollback)
+    if ($TargetType -eq "Thread" -and $TID_Id -gt 0) {
+        $res = [DeepVisibilitySensor]::QuarantineNativeThread($TID_Id, $PID_Id)
+        if ($res) {
+            $containmentStatus = "Thread ($TID_Id) Quarantined"
+            $global:TotalMitigations++
+        }
+    }
+    else {
+        Stop-Process -Id $PID_Id -Force -ErrorAction SilentlyContinue
+        if (-not (Get-Process -Id $PID_Id -ErrorAction SilentlyContinue)) {
+            $containmentStatus = "Process ($PID_Id) Terminated"
+            $global:TotalMitigations++
+        }
+    }
+
+    # 4. INCIDENT REPORTING
+    $ReportDir = "C:\ProgramData\DeepSensor\Data\Reports"
+    if (-not (Test-Path $ReportDir)) { New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null }
+    $ReportId = [guid]::NewGuid().ToString().Substring(0,8)
+
+    $IncidentReport = @{
+        IncidentID = $ReportId
+        Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Process = $ProcName
+        PID = $PID_Id
+        TID = $TID_Id
+        TriggerReason = $Reason
+        ActionTaken = $containmentStatus
+        ForensicsSavedAt = $forensicArtifact
+    }
+    $IncidentReport | ConvertTo-Json -Depth 4 | Out-File "$ReportDir\Incident_${ReportId}.json"
+
+    $audit = "{$global:EnrichmentPrefix`"Category`":`"AuditTrail`", `"Action`":`"$containmentStatus`", `"TargetProcess`":`"$ProcName`", `"PID`":$PID_Id, `"TID`":$TID_Id, `"Reason`":`"$Reason`", `"ReportID`":`"$ReportId`"}"
+    $script:logBatch.Add($audit)
+
+    Add-AlertMessage "DEFENSE: $containmentStatus ($ProcName)" "$([char]27)[93;40m"
+}
+
+function Invoke-DefenseRollback {
+    Write-Host "`n[!] INITIATING ACTIVE DEFENSE ROLLBACK..." -ForegroundColor Cyan
+
+    # 1. Lift Host Isolation (Firewall)
+    try {
+        Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction NotConfigured -DefaultOutboundAction NotConfigured -ErrorAction Stop
+        Remove-NetFirewallRule -DisplayName "DeepSensor_Safe_Uplink" -ErrorAction SilentlyContinue
+        Write-Diag "[ROLLBACK] Network Host Isolation lifted." "INFO"
+        Add-AlertMessage "ROLLBACK: Network Isolation Lifted" "$([char]27)[96;40m"
+    } catch { Write-Diag "[ROLLBACK] Network restore failed: $($_.Exception.Message)" "ERROR" }
+
+    # 2. Look for recently suspended threads in our audit log and resume them
+    # Note: In a full enterprise UI, you would select the specific TID. Here we use a safe heuristic for the last action.
+    $LastSuspendedTid = 0
+    # Search backwards through the log batch for the last quarantined thread
+    for ($i = $script:logBatch.Count - 1; $i -ge 0; $i--) {
+        if ($script:logBatch[$i] -match "`"Action`":`"Thread \((\d+)\) Quarantined`"") {
+            $LastSuspendedTid = [int]$matches[1]
+            break
+        }
+    }
+
+    if ($LastSuspendedTid -gt 0) {
+        $res = [DeepVisibilitySensor]::ResumeNativeThread($LastSuspendedTid)
+        if ($res) {
+            Write-Diag "[ROLLBACK] Successfully resumed Native Thread $LastSuspendedTid." "INFO"
+            Add-AlertMessage "ROLLBACK: Thread $LastSuspendedTid Resumed" "$([char]27)[96;40m"
+        }
+    } else {
+        Add-AlertMessage "ROLLBACK: No suspended threads found in active queue." "$([char]27)[90;40m"
+    }
+    Start-Sleep -Seconds 2
+}
+
+function Invoke-HostIsolation {
+    param([string]$Reason, [string]$TriggeringProcess)
+
+    if (-not $ArmedMode) {
+        Write-Diag "[AUDIT MODE] Host Isolation bypassed for: $Reason ($TriggeringProcess)" "CRITICAL"
+        return
+    }
+
+    Write-Host "`n[!] CRITICAL THREAT DETECTED: INITIATING HOST ISOLATION" -ForegroundColor Red
+    Write-Host "    Reason: $Reason ($TriggeringProcess)" -ForegroundColor Yellow
+
+    try {
+        Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction Block -DefaultOutboundAction Block -ErrorAction Stop
+        New-NetFirewallRule -DisplayName "DeepSensor_Safe_Uplink" -Direction Outbound -Action Allow -RemoteAddress "10.0.0.50" -ErrorAction SilentlyContinue | Out-Null
+        Write-Diag "[ACTIVE DEFENSE] Host isolated from network via Firewall. Safe Uplink preserved." "CRITICAL"
+    } catch {
+        Write-Diag "[ACTIVE DEFENSE ERROR] Failed to enforce firewall quarantine: $($_.Exception.Message)" "CRITICAL"
+    }
+}
+
+function Submit-SensorAlert {
+    param(
+        [string]$Type, [string]$TargetObject, [string]$Image, [string]$Flags,
+        [int]$Confidence, [int]$PID_Id = 0, [int]$TID_Id = 0, [string]$AttckMapping = "N/A",
+        [string]$EventId = ([guid]::NewGuid().ToString()), [string]$RawJson = $null,
+        [int]$LearningHit = 0, [string]$CommandLine = "Unknown", [switch]$IsSuppressed
+    )
+
+    # 1. Deduplication Logic
+    $dedupKey = "$($Type)_$($TargetObject)_$($Flags)_$($Image)"
+    $isNewAlert = -not $global:cycleAlerts.ContainsKey($dedupKey)
+
+    if (-not $isNewAlert) {
+        $global:cycleAlerts[$dedupKey].Count++
+        return
+    }
+
+    # 2. Targeted UEBA Telemetry
+    if ($RawJson -and ($Type -eq "ML_Anomaly" -or $Type -eq "Static_Detection")) {
+        try {
+            $injectStr = "`"EventID`":`"$EventId`", `"ComputerName`":`"$global:ComputerName`", `"HostIP`":`"$global:HostIP`", `"SensorUser`":`"$global:SensorUser`", `"LearningHit`":$LearningHit, "
+            $enrichedJson = $RawJson.Insert(1, $injectStr)
+
+            # Safely route the enriched telemetry directly into the Rust ML engine memory space
+            [DeepVisibilitySensor]::InjectUebaTelemetry($enrichedJson)
+
+            # Persist to local batch for SIEM forwarding
+            $script:uebaBatch.Add($enrichedJson)
+        } catch {}
+    }
+
+    # 3. Standardized PSCustomObject
+    $alertObj = [PSCustomObject][ordered]@{
+        EventID = $EventId; Count = 1
+        Timestamp_Local = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
+        Timestamp_UTC   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        ComputerName = $global:ComputerName; HostIP = $global:HostIP; SensorUser = $global:SensorUser
+        EventType = $Type; Destination = $TargetObject; Image = $Image; CommandLine = $CommandLine
+        SuspiciousFlags = $Flags; ATTCKMappings = $AttckMapping; Confidence = $Confidence
+        Action = if ($IsSuppressed) { "Suppressed" } elseif ($global:IsArmed -and $Confidence -ge 95) { "Mitigated" } else { "Logged" }
+    }
+
+    $global:cycleAlerts[$dedupKey] = $alertObj
+
+    # 4. Instant HUD Rendering & Defense Routing
+    if ($IsSuppressed) { return }
+
+    $cRed = "$([char]27)[38;2;255;49;49m"; $cOrange = "$([char]27)[38;2;255;103;0m"
+    $cGold = "$([char]27)[38;2;255;215;0m"; $cWhite = "$([char]27)[38;2;255;255;255m"
+
+    if ($alertObj.Action -eq "Mitigated" -or $Confidence -ge 100) {
+        Add-AlertMessage "CRITICAL BEHAVIOR: $Flags ($Image)" $cRed
+    } elseif ($Confidence -ge 90) {
+        Add-AlertMessage "ANOMALY: $Flags ($Image) [Conf:$Confidence]" $cOrange
+    } elseif ($LearningHit -gt 0) {
+        Add-AlertMessage "LEARNING: $Flags ($Image) [Hit:$LearningHit]" $cGold
+    } else {
+        Add-AlertMessage "STATIC: $Flags ($Image)" $cWhite
+    }
+
+    if ($alertObj.Action -eq "Mitigated") {
+        Invoke-ActiveDefense -ProcName $Image -PID_Id $PID_Id -TID_Id $TID_Id -TargetType "Process" -Reason $Flags
+        Invoke-HostIsolation -Reason $Flags -TriggeringProcess $Image
+    }
+}
+
+# ======================================================================
+# 6. ENVIRONMENT & BOOTSTRAP FUNCTIONS
+# ======================================================================
+
+function Protect-SensorEnvironment {
+    Write-Diag "[*] Hardening Sensor Ecosystem (DACLs & Registry)..." "STARTUP"
+
+    $DataDir = "C:\ProgramData\DeepSensor\Data"
+    if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
+
+    $PathsToLock = @($ScriptDir, (Join-Path $ScriptDir "sigma"))
+    foreach ($p in $PathsToLock) {
+        if (Test-Path $p) {
+            $null = icacls $p /inheritance:r /q
+                $null = icacls $p /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q
+                $null = icacls $p /grant "BUILTIN\Administrators:(OI)(CI)F" /q
+                $null = icacls $p /deny "BUILTIN\Users:(OI)(CI)W" /q
+        }
+    }
+
+    if (Test-Path $DataDir) {
+        $currentUser = "$env:USERDOMAIN\$env:USERNAME"
+
+        icacls $DataDir /inheritance:d /q *>$null
+        icacls $DataDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q *>$null
+        icacls $DataDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q *>$null
+        icacls $DataDir /grant "${currentUser}:(OI)(CI)M" /q *>$null
+
+        if ($null -ne $ReadAccessAccounts) {
+            foreach ($account in $ReadAccessAccounts) {
+                if (-not [string]::IsNullOrWhiteSpace($account)) {
+                    icacls $DataDir /grant "${account}:(OI)(CI)RX" /q *>$null
+                }
+            }
+        }
+        icacls $DataDir /remove "BUILTIN\Users" /q 2>$null *>$null
+    }
+
+    Write-Diag "    [+] Discretionary Access Control Lists (DACLs) locked down." "STARTUP"
+
+    $ServiceName = "DeepSensorService"
+    $serviceExists = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($serviceExists) {
+        $secureSddl = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWLOCRRC;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
+        $null = & sc.exe sdset $ServiceName $secureSddl
+        Write-Diag "    [+] Windows Service configuration secured." "STARTUP"
+    }
+}
+
+function Initialize-Environment {
+    Write-Diag "[*] Hardening Binary Environment & Cryptographic Validation..." "STARTUP"
+
+    $BaseDataDir = "C:\ProgramData\DeepSensor"
+    $BinDir = Join-Path $BaseDataDir "bin"
+    if (-not (Test-Path $BinDir)) {
+        New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+    }
+
+    $MlBinaryPath = Join-Path $BinDir $MlBinaryName
+    $HashPath     = $MlBinaryPath -replace "\.dll$", ".sha256"
+    $binaryReady  = $false
+
+    $ProjectDll  = Join-Path $ScriptDir $MlBinaryName
+    $ProjectHash = Join-Path $ScriptDir ($MlBinaryName -replace "\.dll$", ".sha256")
+
+    if ((Test-Path $ProjectDll) -and (Test-Path $ProjectHash)) {
+        Write-Diag "    [*] New build artifacts detected in project directory. Preparing secure update..." "STARTUP"
+
+        Write-Diag "    [*] Temporarily unlocking bin directory for update..." "STARTUP"
+        $null = icacls $BinDir /inheritance:e /q
+        $null = icacls $BinDir /remove "BUILTIN\Users" /q 2>$null
+
+        if (Test-Path $MlBinaryPath) { Remove-Item $MlBinaryPath -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $HashPath)     { Remove-Item $HashPath     -Force -ErrorAction SilentlyContinue }
+
+        $ExpectedHash = (Get-Content $ProjectHash -Raw).Trim()
+        $ActualHash   = (Get-FileHash $ProjectDll -Algorithm SHA256).Hash
+
+        if ($ExpectedHash -eq $ActualHash) {
+            Move-Item -Path $ProjectDll  -Destination $MlBinaryPath -Force
+            Move-Item -Path $ProjectHash -Destination $HashPath     -Force
+            $binaryReady = $true
+            Write-Diag "    [+] Hash verified → New DLL and hash successfully moved to secure bin" "STARTUP"
+        }
+        else {
+            Write-Diag "    [!] Hash mismatch on build artifacts in project directory!" "ERROR"
+        }
+
+        Write-Diag "    [*] Re-locking bin directory..." "STARTUP"
+        $null = icacls $BinDir /inheritance:d /q
+        $null = icacls $BinDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q
+        $null = icacls $BinDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q
+        $null = icacls $BinDir /deny "BUILTIN\Users:(W)" /q
+    }
+
+    if (-not $binaryReady -and (Test-Path $MlBinaryPath) -and (Test-Path $HashPath)) {
+        $ExpectedHash = (Get-Content $HashPath -Raw).Trim()
+        $ActualHash   = (Get-FileHash $MlBinaryPath -Algorithm SHA256).Hash
+
+        if ($ExpectedHash -eq $ActualHash) {
+            $binaryReady = $true
+            Write-Diag "    [+] Cryptographic Integrity Verified: $MlBinaryName" "STARTUP"
+        } else {
+            Write-Diag "    [!] CRITICAL: Hash Mismatch. Possible DLL Hijacking detected." "ERROR"
+        }
+    }
+
+    if (-not $binaryReady) {
+        Write-Diag "    [-] Provisioning verified binary from repository..." "STARTUP"
+        try {
+            if ($OfflineRepoPath) {
+                Copy-Item (Join-Path $OfflineRepoPath $MlBinaryName) -Destination $MlBinaryPath -Force
+                Copy-Item (Join-Path $OfflineRepoPath ($MlBinaryName -replace "\.dll$", ".sha256")) -Destination $HashPath -Force
+            }
+
+            if ((Test-Path $MlBinaryPath) -and (Test-Path $HashPath)) {
+                $ExpectedHash = (Get-Content $HashPath -Raw).Trim()
+                $ActualHash   = (Get-FileHash $MlBinaryPath -Algorithm SHA256).Hash
+                if ($ExpectedHash -eq $ActualHash) {
+                    $binaryReady = $true
+                    Write-Diag "    [+] Binary successfully provisioned and verified." "STARTUP"
+                }
+            }
+        } catch {
+            Write-Diag "    [!] Acquisition failed: $($_.Exception.Message)" "ERROR"
+        }
+    }
+
+    if (-not $binaryReady) {
+        throw "CRITICAL: Engine initialization aborted due to missing verified artifacts."
+    }
+
+    $null = icacls $BinDir /inheritance:d /q
+    $null = icacls $BinDir /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /q
+    $null = icacls $BinDir /grant "BUILTIN\Administrators:(OI)(CI)F" /q
+    $null = icacls $BinDir /deny "BUILTIN\Users:(W)" /q
+
+    return $MlBinaryPath
+}
+
+function Initialize-TraceEventDependency {
+    param([string]$ExtractBase = "C:\ProgramData\DeepSensor\Dependencies")
+
+    Write-Diag "Validating C# ETW Dependencies..." "STARTUP"
+    $ExpectedDllName = "Microsoft.Diagnostics.Tracing.TraceEvent.dll"
+
+    $ExistingDll = Get-ChildItem -Path $ExtractBase -Filter $ExpectedDllName -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if ($ExistingDll) {
+        $DllDir = Split-Path $ExistingDll.FullName -Parent
+        $FastSerPath = Join-Path $DllDir "Microsoft.Diagnostics.FastSerialization.dll"
+        $YaraPath = Join-Path $DllDir "libyara.NET.dll"
+
+        # Flatten unmanaged DLLs on fast-restart
+        $Amd64Dir = Join-Path $DllDir "amd64"
+        if (Test-Path $Amd64Dir) {
+            $UnmanagedToFlatten = @("KernelTraceControl.dll", "msdia140.dll", "yara.dll")
+            foreach ($lib in $UnmanagedToFlatten) {
+                $src = Join-Path $Amd64Dir $lib
+                $dst = Join-Path $DllDir $lib
+                if ((Test-Path $src) -and -not (Test-Path $dst)) {
+                    Copy-Item -Path $src -Destination $dst -Force
+                }
+            }
+        }
+
+        if ((Test-Path $FastSerPath) -and (Test-Path $YaraPath)) {
+            Write-Diag "[+] TraceEvent and Context-Aware YARA libraries validated." "STARTUP"
+            return $ExistingDll.FullName
+        }
+    }
+
+    Write-Diag "[-] TraceEvent library absent. Initiating silent deployment..." "STARTUP"
+    try {
+        if (Test-Path $ExtractBase) { Remove-Item $ExtractBase -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $ExtractBase -Force | Out-Null
+
+        $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
+        if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
+
+        $TE_Zip = "$SecureStaging\TE.zip"
+        $UN_Zip = "$SecureStaging\UN.zip"
+
+        if ($OfflineRepoPath) {
+            Copy-Item (Join-Path $OfflineRepoPath "traceevent.nupkg") -Destination $TE_Zip -Force
+            Copy-Item (Join-Path $OfflineRepoPath "unsafe.nupkg") -Destination $UN_Zip -Force
+        } else {
+            $TE_Url = "https://www.nuget.org/api/v2/package/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.2"
+            $UN_Url = "https://www.nuget.org/api/v2/package/System.Runtime.CompilerServices.Unsafe/5.0.0"
+            Invoke-WebRequest -Uri $TE_Url -OutFile $TE_Zip -UseBasicParsing
+            Invoke-WebRequest -Uri $UN_Url -OutFile $UN_Zip -UseBasicParsing
+        }
+
+        Expand-Archive -Path $TE_Zip -DestinationPath "$ExtractBase\TE" -Force
+        Expand-Archive -Path $UN_Zip -DestinationPath "$ExtractBase\UN" -Force
+        Remove-Item $TE_Zip, $UN_Zip -Force -ErrorAction SilentlyContinue
+
+        $YARA_Zip = "$SecureStaging\YARA.zip"
+        if ($OfflineRepoPath) {
+            Copy-Item (Join-Path $OfflineRepoPath "libyaranet.nupkg") -Destination $YARA_Zip -Force
+        } else {
+            Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/libyara.NET/3.5.2" -OutFile $YARA_Zip -UseBasicParsing
+        }
+        Expand-Archive -Path $YARA_Zip -DestinationPath "$ExtractBase\YARA" -Force
+        Remove-Item $YARA_Zip -Force -ErrorAction SilentlyContinue
+
+        $FoundDll = Get-ChildItem -Path "$ExtractBase\TE" -Filter $ExpectedDllName -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match "net462|netstandard|net45" } | Select-Object -First 1
+
+        if ($FoundDll) {
+            $DllDir = Split-Path $FoundDll.FullName -Parent
+            $UnsafeDll = Get-ChildItem -Path "$ExtractBase\UN" -Filter "System.Runtime.CompilerServices.Unsafe.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "net45|netstandard|net46" } | Select-Object -First 1
+            if ($UnsafeDll) { Copy-Item -Path $UnsafeDll.FullName -Destination $DllDir -Force }
+
+            $Amd64Dir = Join-Path $DllDir "amd64"
+            if (-not (Test-Path $Amd64Dir)) { New-Item -ItemType Directory -Path $Amd64Dir -Force | Out-Null }
+
+            $NativeHelpers = @(
+                (Get-ChildItem -Path "$ExtractBase\TE" -Filter "KernelTraceControl.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1),
+                (Get-ChildItem -Path "$ExtractBase\TE" -Filter "msdia140.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1)
+            )
+
+            foreach ($h in $NativeHelpers) {
+                if ($h) {
+                    Copy-Item -Path $h.FullName -Destination $Amd64Dir -Force
+                    Copy-Item -Path $h.FullName -Destination $DllDir -Force
+                }
+            }
+
+            $ManagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "libyara.NET.dll" -Recurse | Select-Object -First 1
+            $UnmanagedYara = Get-ChildItem -Path "$ExtractBase\YARA" -Filter "yara.dll" -Recurse | Where-Object { $_.FullName -match "win-x64" } | Select-Object -First 1
+
+            if ($ManagedYara) { Copy-Item -Path $ManagedYara.FullName -Destination $DllDir -Force }
+            if ($UnmanagedYara) {
+                Copy-Item -Path $UnmanagedYara.FullName -Destination $Amd64Dir -Force
+                Copy-Item -Path $UnmanagedYara.FullName -Destination $DllDir -Force
+            }
+
+            Write-Diag "[+] TraceEvent library deployed successfully." "STARTUP"
+            return $FoundDll.FullName
+        } else {
+            throw "DLL not found within extracted package structure."
+        }
+    } catch {
+        Write-Diag "[!] TraceEvent deployment failed: $($_.Exception.Message)" "STARTUP"
+        return $null
+    }
+}
+
+function Invoke-EnvironmentalAudit {
+    Write-Diag "    [*] Initializing Environmental Audit..." "STARTUP"
+    Write-Diag "        [*] Executing Proactive Posture & WMI Sweep..." "STARTUP"
+
+    $lsa = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -ErrorAction SilentlyContinue
+    if (-not $lsa -or $lsa.RunAsPPL -ne 1) {
+        Write-Diag "[POSTURE] Vulnerability: LSASS is not running as a Protected Process Light (PPL)." "AUDIT"
+    }
+
+    $rdp = Get-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -ErrorAction SilentlyContinue
+    if ($rdp -and $rdp.fDenyTSConnections -eq 0) {
+        Write-Diag "[POSTURE] Vulnerability: RDP is currently enabled and exposed." "AUDIT"
+    }
+
+    try {
+        $consumers = Get-WmiObject -Namespace "root\subscription" -Class CommandLineEventConsumer -ErrorAction Stop
+        foreach ($c in $consumers) {
+            if ($c.CommandLineTemplate -match "powershell|cmd|wscript|cscript") {
+                Write-Diag "[THREAT HUNT] Suspicious WMI Event Consumer Found: $($c.Name) -> $($c.CommandLineTemplate)" "CRITICAL"
+            }
+        }
+    } catch { }
+}
+
+# ======================================================================
+# 7. THREAT INTELLIGENCE & COMPILER FUNCTIONS
+# ======================================================================
+
 function Sync-YaraIntelligence {
     Write-Diag "Syncing YARA Intelligence (Elastic & ReversingLabs)..." "STARTUP"
 
     $YaraBaseDir = Join-Path $ScriptDir "yara"
     $VectorDir = if ($OfflineRepoPath) { Join-Path $OfflineRepoPath "yara_rules" } else { Join-Path $ScriptDir "yara_rules" }
+
+    $CacheMarker = Join-Path $ScriptDir "yara.cache"
+    $needsDownload = $true
+
+    if (Test-Path $CacheMarker) {
+        if (((Get-Date) - (Get-Item $CacheMarker).LastWriteTime).TotalHours -lt 24) {
+            $needsDownload = $false
+            Write-Diag "    [*] Using cached YARA Intelligence (< 24h old). Skipping download." "STARTUP"
+        }
+    }
+
     if (-not (Test-Path $YaraBaseDir)) { New-Item -ItemType Directory -Path $YaraBaseDir -Force | Out-Null }
 
-    $Sources = @(
-        @{ Name = "ElasticLabs"; Url = "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"; SubPath = "protections-artifacts-main/yara" },
-        @{ Name = "ReversingLabs"; Url = "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/develop.zip"; SubPath = "reversinglabs-yara-rules-develop/yara" },
-        @{ Name = "SignatureBase_Neo23x0"; Url = "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"; SubPath = "signature-base-master/yara" }
-    )
+    if ($needsDownload) {
+        $Sources = @(
+            @{ Name = "ElasticLabs"; Url = "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"; SubPath = "protections-artifacts-main/yara" },
+            @{ Name = "ReversingLabs"; Url = "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/develop.zip"; SubPath = "reversinglabs-yara-rules-develop/yara" },
+            @{ Name = "SignatureBase_Neo23x0"; Url = "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"; SubPath = "signature-base-master/yara" }
+        )
 
-    $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
-    if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
+        $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
+        if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
 
-    foreach ($src in $Sources) {
-        $TempZip = "$SecureStaging\$($src.Name).zip"
-        $TempExt = "$SecureStaging\$($src.Name)_extract"
+        foreach ($src in $Sources) {
+            $TempZip = "$SecureStaging\$($src.Name).zip"
+            $TempExt = "$SecureStaging\$($src.Name)_extract"
 
-        try {
-            if ($OfflineRepoPath) {
-                $OfflineZip = Join-Path $OfflineRepoPath "$($src.Name).zip"
-                if (Test-Path $OfflineZip) { Copy-Item $OfflineZip -Destination $TempZip -Force }
-            } else {
-                Write-Diag "    [*] Downloading $($src.Name) ruleset..." "STARTUP"
-                Invoke-WebRequest -Uri $src.Url -OutFile $TempZip -UseBasicParsing -ErrorAction Stop
+            try {
+                if ($OfflineRepoPath) {
+                    $OfflineZip = Join-Path $OfflineRepoPath "$($src.Name).zip"
+                    if (Test-Path $OfflineZip) { Copy-Item $OfflineZip -Destination $TempZip -Force }
+                } else {
+                    Write-Diag "    [*] Downloading $($src.Name) ruleset..." "STARTUP"
+                    Invoke-WebRequest -Uri $src.Url -OutFile $TempZip -UseBasicParsing -ErrorAction Stop
+                }
+
+                if (Test-Path $TempZip) {
+                    Expand-Archive -Path $TempZip -DestinationPath $TempExt -Force
+                    $SourceRules = Join-Path $TempExt $src.SubPath
+                    Copy-Item -Path "$SourceRules\*" -Destination $YaraBaseDir -Recurse -Force
+                    Write-Diag "    [+] $($src.Name) staged to local yara/ directory." "STARTUP"
+                }
+            } catch {
+                Write-Diag "    [-] Failed to sync $($src.Name): $($_.Exception.Message)" "STARTUP"
+            } finally {
+                if (Test-Path $TempZip) { Remove-Item $TempZip -Force }
+                if (Test-Path $TempExt) { Remove-Item $TempExt -Recurse -Force }
             }
-
-            if (Test-Path $TempZip) {
-                Expand-Archive -Path $TempZip -DestinationPath $TempExt -Force
-                $SourceRules = Join-Path $TempExt $src.SubPath
-                Copy-Item -Path "$SourceRules\*" -Destination $YaraBaseDir -Recurse -Force
-                Write-Diag "    [+] $($src.Name) staged to local yara/ directory." "STARTUP"
-            }
-        } catch {
-            Write-Diag "    [-] Failed to sync $($src.Name): $($_.Exception.Message)" "STARTUP"
-        } finally {
-            if (Test-Path $TempZip) { Remove-Item $TempZip -Force }
-            if (Test-Path $TempExt) { Remove-Item $TempExt -Recurse -Force }
         }
+        New-Item -Path $CacheMarker -ItemType File -Force | Out-Null
     }
 
     $LocalRules = Get-ChildItem -Path $YaraBaseDir -Filter "*.yar" -Recurse
@@ -718,7 +868,6 @@ function Sync-YaraIntelligence {
         try {
             # GATEKEEPER: Test-compile the rule in memory before committing to a vector
             if (-not [DeepVisibilitySensor]::IsYaraRuleValid($rule.FullName)) {
-                Write-Diag "    [!] Excluding incompatible/invalid YARA rule: $($rule.Name)" "WARNING"
                 continue # Skip this file and move to the next
             }
 
@@ -769,7 +918,7 @@ function Get-CompiledSigmaBase64 {
         foreach ($line in $lines) {
             if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
 
-            # Extract Category to route to the correct C# Aho-Corasick Tree
+            # Extract Category to route to the correct C# 0-Alloc Search Tree
             if ($line -match "(?i)category:\s*(.+)") {
                 $rawCat = $matches[1].Trim(" '`"").ToLower()
                 if ($rawCat -match "registry") { $category = "registry_event" }
@@ -782,7 +931,7 @@ function Get-CompiledSigmaBase64 {
             }
 
             if ($line -match "(?i)^tags:") { $inTagsBlock = $true; $inAnchorBlock = $false; continue }
-            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|TargetFilename|Details|ScriptBlockText|ImageLoaded|Signature|Image|ParentImage)\|.*?(contains|endswith|startswith).*?:") {
+            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|TargetFilename|Details|ScriptBlockText|ImageLoaded|Signature|Image|ParentImage|CommandLine|Image)\|.*?(contains|endswith|startswith|equals|match|regex).*?:(.+)") {
                 $inAnchorBlock = $true; $inTagsBlock = $false; continue
             }
 
@@ -822,7 +971,7 @@ function Invoke-StagingInjection {
     $SigmaDir = "$ScriptDir\sigma"
 
     if (-not (Test-Path $StagingDir)) {
-        Write-Diag "`n[*] Staging directory ($StagingDir) does not exist. Skipping." "STARTUP"
+        Write-Diag "`n[*] Staging directory '\sigma_staging' has no rules. Skipping." "STARTUP"
         Start-Sleep -Seconds 1
         return
     }
@@ -851,49 +1000,62 @@ function Invoke-StagingInjection {
     }
 }
 
-# ====================== SIGMA COMPILER & THREAT INTEL ======================
 function Initialize-SigmaEngine {
     Write-Diag "Initializing Sigma Compiler & Threat Intelligence Matrices..." "STARTUP"
 
     $LocalSigmaDir = Join-Path $ScriptDir "sigma"
     if (-not (Test-Path $LocalSigmaDir)) { New-Item -ItemType Directory -Path $LocalSigmaDir -Force | Out-Null }
 
-    $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
-    if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
+    $SigmaCacheMarker = Join-Path $ScriptDir "sigma.cache"
+    $needsSigmaDownload = $true
 
-    $TempZipPath = "$SecureStaging\sigma_master.zip"
-    $ExtractPath = "$SecureStaging\sigma_extract"
-
-    try {
-        if ($OfflineRepoPath) {
-            Write-Diag "    [*] Fetching Sigma rules from offline repository..." "STARTUP"
-            Copy-Item (Join-Path $OfflineRepoPath "sigma_master.zip") -Destination $TempZipPath -Force -ErrorAction Stop
-        } else {
-            Write-Diag "    [*] Fetching latest Sigma rules from SigmaHQ GitHub..." "STARTUP"
-            $SigmaZipUrl = "https://github.com/SigmaHQ/sigma/archive/refs/heads/master.zip"
-            Invoke-WebRequest -Uri $SigmaZipUrl -OutFile $TempZipPath -UseBasicParsing -ErrorAction Stop
+    if (Test-Path $SigmaCacheMarker) {
+        if (((Get-Date) - (Get-Item $SigmaCacheMarker).LastWriteTime).TotalHours -lt 24) {
+            $needsSigmaDownload = $false
+            Write-Diag "    [*] Using cached Sigma HQ Rules (< 24h old). Skipping download." "STARTUP"
         }
-        Expand-Archive -Path $TempZipPath -DestinationPath $ExtractPath -Force -ErrorAction Stop
+    }
 
-        $RuleCategories = @(
-            "process_creation", "file_event", "registry_event",
-            "wmi_event", "pipe_created",
-            "ps_module", "ps_script", "ps_classic_start",
-            "driver_load", "image_load"
-        )
+    if ($needsSigmaDownload) {
+        $SecureStaging = "C:\ProgramData\DeepSensor\Staging"
+        if (-not (Test-Path $SecureStaging)) { New-Item -ItemType Directory -Path $SecureStaging -Force | Out-Null }
 
-        foreach ($cat in $RuleCategories) {
-            $RulesPath = Join-Path $ExtractPath "sigma-master\rules\windows\$cat\*"
-            if (Test-Path (Split-Path $RulesPath)) {
-                Copy-Item -Path $RulesPath -Destination $LocalSigmaDir -Recurse -Force
+        $TempZipPath = "$SecureStaging\sigma_master.zip"
+        $ExtractPath = "$SecureStaging\sigma_extract"
+
+        try {
+            if ($OfflineRepoPath) {
+                Write-Diag "    [*] Fetching Sigma rules from offline repository..." "STARTUP"
+                Copy-Item (Join-Path $OfflineRepoPath "sigma_master.zip") -Destination $TempZipPath -Force -ErrorAction Stop
+            } else {
+                Write-Diag "    [*] Fetching latest Sigma rules from SigmaHQ GitHub..." "STARTUP"
+                $SigmaZipUrl = "https://github.com/SigmaHQ/sigma/archive/refs/heads/master.zip"
+                Invoke-WebRequest -Uri $SigmaZipUrl -OutFile $TempZipPath -UseBasicParsing -ErrorAction Stop
             }
+            Expand-Archive -Path $TempZipPath -DestinationPath $ExtractPath -Force -ErrorAction Stop
+
+            $RuleCategories = @(
+                "process_creation", "file_event", "registry_event", "wmi_event", "pipe_created",
+                "ps_module", "ps_script", "ps_classic_start", "ps_classic_provider",
+                "driver_load", "image_load", "network_connection", "dns", "firewall",
+                "webserver", "sysmon", "powershell", "security", "application",
+                "threat_hunting", "emerging_threats"
+            )
+
+            foreach ($cat in $RuleCategories) {
+                $RulesPath = Join-Path $ExtractPath "sigma-master\rules\windows\$cat\*"
+                if (Test-Path (Split-Path $RulesPath)) {
+                    Copy-Item -Path $RulesPath -Destination $LocalSigmaDir -Recurse -Force
+                }
+            }
+            New-Item -Path $SigmaCacheMarker -ItemType File -Force | Out-Null
+            Write-Diag "    [+] Successfully updated local Sigma repository with Advanced Detection vectors." "STARTUP"
+        } catch {
+            Write-Diag "    [-] GitHub pull failed (Network/Firewall). Proceeding with local cache." "STARTUP"
+        } finally {
+            if (Test-Path $TempZipPath) { Remove-Item $TempZipPath -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
         }
-        Write-Diag "    [+] Successfully updated local Sigma repository with Advanced Detection vectors." "STARTUP"
-    } catch {
-        Write-Diag "    [-] GitHub pull failed (Network/Firewall). Proceeding with local cache." "STARTUP"
-    } finally {
-        if (Test-Path $TempZipPath) { Remove-Item $TempZipPath -Force -ErrorAction SilentlyContinue }
-        if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     $SigmaFiles = Get-ChildItem -Path $LocalSigmaDir -Include "*.yml", "*.yaml" -Recurse
@@ -902,7 +1064,7 @@ function Initialize-SigmaEngine {
     $ParsedCount = 0
     $SkippedCount = 0
 
-    Write-Diag "    [*] Compiling local Sigma rules into JSON Aho-Corasick Matrix..." "STARTUP"
+    Write-Diag "    [*] Compiling local Sigma rules into Zero-Allocation Flat Arrays..." "STARTUP"
 
     foreach ($file in $SigmaFiles) {
         $lines = Get-Content $file.FullName
@@ -926,7 +1088,7 @@ function Initialize-SigmaEngine {
             # Extract Title
             if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
 
-            # Extract Category to route to the correct C# Aho-Corasick Tree
+            # Extract Category to route to the correct C# 0-Alloc Search Tree
             if ($line -match "(?i)category:\s*(.+)") {
                 $rawCat = $matches[1].Trim(" '`"").ToLower()
                 if ($rawCat -match "registry") { $category = "registry_event" }
@@ -981,16 +1143,27 @@ function Initialize-SigmaEngine {
     $OfflineDrivers = @("capcom.sys", "iqvw64.sys", "RTCore64.sys", "gdrv.sys", "AsrDrv.sys", "procexp.sys")
     foreach ($d in $OfflineDrivers) { [void]$TiDriverSignatures.Add($d) }
 
+    $LolDriversCache = Join-Path $ScriptDir "loldrivers.json"
+    $needsDriverDownload = $true
+    if (Test-Path $LolDriversCache) {
+        if (((Get-Date) - (Get-Item $LolDriversCache).LastWriteTime).TotalHours -lt 24) { $needsDriverDownload = $false }
+    }
+
     try {
         $jsonString = ""
         if ($OfflineRepoPath) {
             Write-Diag "[*] Loading LOLDrivers Threat Intel from offline repository..." "STARTUP"
             $jsonString = Get-Content (Join-Path $OfflineRepoPath "drivers.json") -Raw
-        } else {
+        } elseif ($needsDriverDownload) {
             Write-Diag "[*] Fetching live LOLDrivers.io Threat Intel..." "STARTUP"
             $response = Invoke-WebRequest -Uri "https://www.loldrivers.io/api/drivers.json" -UseBasicParsing -ErrorAction Stop
             $jsonString = $response.Content
+            $jsonString | Out-File -FilePath $LolDriversCache -Encoding UTF8 -Force
+        } else {
+            Write-Diag "[*] Loading cached LOLDrivers.io Threat Intel (< 24h old)..." "STARTUP"
+            $jsonString = Get-Content $LolDriversCache -Raw
         }
+
         $jsonString = $jsonString -replace '"INIT"', '"init"'
         $apiDrivers = $jsonString | ConvertFrom-Json
 
@@ -1026,7 +1199,48 @@ function Initialize-SigmaEngine {
     }
 }
 
-# ====================== SENSOR INITIALIZATION ======================
+function Get-IniContent([string]$filePath) {
+    $ini = @{}
+    $currentSection = "Default"
+    $ini[$currentSection] = @{}
+
+    $lines = Get-Content $filePath -ErrorAction Stop
+    foreach ($line in $lines) {
+        $line = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) { continue }
+
+        if ($line -match "^\[(.*)\]$") {
+            $currentSection = $matches[1].Trim()
+            if (-not $ini.ContainsKey($currentSection)) { $ini[$currentSection] = @{} }
+        } elseif ($line -match "^([^=]+)=(.*)$") {
+            $key = $matches[1].Trim()
+            $val = $matches[2].Trim()
+            $ini[$currentSection][$key] = $val
+        }
+    }
+    return $ini
+}
+
+# ======================================================================
+# 8. MAIN EXECUTION FLOW (the only top-level code)
+# ======================================================================
+
+$ConfigPath = Join-Path $ScriptDir "DeepSensor_Config.ini"
+if (-not (Test-Path $ConfigPath)) { throw "CRITICAL: Missing DeepSensor_Config.ini." }
+
+Write-Diag "[*] Loading external process and registry exclusions..." "STARTUP"
+$IniConfig = Get-IniContent $ConfigPath
+
+if (-not $IniConfig.ContainsKey("ProcessExclusions")) { $IniConfig["ProcessExclusions"] = @{} }
+if (-not $IniConfig.ContainsKey("RegistryExclusions")) { $IniConfig["RegistryExclusions"] = @{} }
+
+$BenignADSProcs = ($IniConfig["ProcessExclusions"]["BenignADSProcs"]) -split ",\s*"
+$TrustedNoise   = ($IniConfig["ProcessExclusions"]["TrustedNoise"]) -split ",\s*"
+$BenignExplorerValues = ($IniConfig["RegistryExclusions"]["BenignExplorerValues"]) -split ",\s*"
+
+# Merge ADS and Trusted Noise for the OS Sensor exclusion pipeline
+$CombinedProcessExclusions = $BenignADSProcs + $TrustedNoise
+
 $ValidMlBinaryPath = Initialize-Environment
 
 $ActualDllPath = Initialize-TraceEventDependency -ExtractBase "C:\ProgramData\DeepSensor\Dependencies"
@@ -1073,7 +1287,8 @@ try {
     Write-Diag "    [*] Bootstrapping unmanaged memory structures..." "STARTUP"
 
     # Map the DLL path for the C# DllImport dynamically
-    [DeepVisibilitySensor]::SetLibraryPath($ScriptDir)
+    $SecureBinDir = Split-Path $ValidMlBinaryPath -Parent
+    [DeepVisibilitySensor]::SetLibraryPath($SecureBinDir)
 
     # Initialize the C# Engine with the 5 required core parameters
     [DeepVisibilitySensor]::Initialize(
@@ -1081,7 +1296,7 @@ try {
         $PID,
         $CompiledTI.Drivers,
         $BenignExplorerValues,
-        $BenignADSProcs
+        $CombinedProcessExclusions
     )
 
     # Inject the startup Sigma JSON Matrix
@@ -1096,9 +1311,8 @@ try {
     Sync-YaraIntelligence
     $YaraRulesPath = if ($OfflineRepoPath) { Join-Path $OfflineRepoPath "yara_rules" } else { Join-Path $ScriptDir "yara_rules" }
     [DeepVisibilitySensor]::InitializeYaraMatrices($YaraRulesPath)
-
-    [DeepVisibilitySensor]::IsArmed = $ArmedMode.IsPresent
     [DeepVisibilitySensor]::StartSession()
+    [DeepVisibilitySensor]::IsArmed = $ArmedMode.IsPresent
 
 } catch {
     Write-Diag "CRITICAL: Engine Compilation Failed. Check OsSensor.cs syntax." "ERROR"
@@ -1108,14 +1322,310 @@ try {
 
 Protect-SensorEnvironment
 
-# ====================================================================
-$totalEvents = 0; $totalAlerts = 0
+# ==============================================================================
+Write-Diag "Initiating 20-second JIT compilation and RAM stabilization phase..." "STARTUP"
+Write-Diag "    [*] Initializing Math Engine and pre-compiling native FFI pointers..." "STARTUP"
+Write-Host "[*] Stabilizing memory footprint (20-second cooldown)..." -ForegroundColor Cyan
 
-$LastHeartbeat = Get-Date; $SensorBlinded = $false
+$ESC = [char]27
+$cGrid      = "$ESC[38;2;0;100;200m"
+$cLand      = "$ESC[38;2;20;220;80m"
+$cTrail     = "$ESC[38;2;0;255;255m"
+$cMapText   = "$ESC[38;2;0;255;255m"
+$cWhite     = "$ESC[38;2;255;255;255m"
+$cRed       = "$ESC[38;2;255;50;50m"
+$cYellow    = "$ESC[38;2;255;215;0m"
+$cReset     = "$ESC[0m"
+
+$cursor = "█"
+
+function Invoke-WoprTyping {
+    param([string]$text, [int]$baseDelay = 40, [int]$pause = 800)
+    foreach ($char in $text.ToCharArray()) {
+        Write-Host "$cMapText$char" -NoNewline
+        Write-Host "$cMapText$cursor" -NoNewline
+        Start-Sleep -Milliseconds ($baseDelay + (Get-Random -Min -10 -Max 30))
+        Write-Host "`b `b" -NoNewline
+    }
+    Write-Host ""
+    Start-Sleep -Milliseconds $pause
+}
+
+[Console]::Clear()
+Write-Host "`n`n"
+
+Invoke-WoprTyping -text "LOGON: Joshua" -pause 600
+Invoke-WoprTyping -text "GREETINGS PROFESSOR FALKEN." -pause 800
+Invoke-WoprTyping -text "SHALL WE PLAY A GAME?" -pause 1000
+
+$games = @(
+    "CHECKERS", "CHESS", "POKER", "FIGHTER COMBAT",
+    "GUERRILLA ENGAGEMENT", "DESERT WARFARE", "AIR-TO-GROUND ACTIONS",
+    "THEATERWIDE TACTICAL WARFARE", "THEATERWIDE BIOTOXIC AND CHEMICAL WARFARE",
+    "", "GLOBAL THERMONUCLEAR WAR"
+)
+
+foreach ($g in $games) {
+    if ($g -eq "") { Start-Sleep -Milliseconds 500; continue }
+    Write-Host "  $cMapText$g"
+    Start-Sleep -Milliseconds 120
+}
+
+Start-Sleep -Milliseconds 1500
+[Console]::Clear()
+Write-Host "`n"
+
+[System.GC]::Collect()
+[System.GC]::WaitForPendingFinalizers()
+
+$simStart = Get-Date
+$width = [Console]::WindowWidth - 2
+$startY = [Console]::CursorTop + 1
+
+if ($startY -ge 20) { $startY = 2 }
+
+$worldMap = @(
+'   180   150W  120W  90W   60W   30W   000   30E   60E   90E   120E  150E  180',
+'    |     |     |     |     |     |     |     |     |     |     |     |     |',
+'90N-+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-90N',
+'    |           . _..::__:  ,-"-"._        |7       ,     _,.__             |',
+'    |   _.___ _ _<_>`!(._`.`-.    /         _._     `_ ,_/  ''  ''-._.---.-.__|',
+'    |>.{     " " `-==,'',._\{  \  / {)      / _ ">_,-'' `                mt-2_|',
+'60N-+  \_.:--.       `._ )`^-. "''       , [_/(                       __,/-'' +-60N',
+'    | ''"''     \         "    _L        oD_,--''                )     /. (|   |',
+'    |          |           ,''          _)_.\\._<> 6              _,'' /  ''   |',
+'    |          `.         /           [_/_''` `"(                <''}  )      |',
+'30N-+           \\    .-. )           /   `-''".." `:._          _)  ''       +-30N',
+'    |    `        \  (  `(           /         `:\  > \  ,-^.  /'' ''         |',
+'    |              `._,   ""         |           \`''   \|   ?_)  {\         |',
+'    |                 `=.---.        `._._       ,''     "`  |'' ,- ''.        |',
+'000-+                   |    `-._         |     /          `:`<_|h--._      +-000',
+'    |                   (        >        .     | ,          `=.__.`-''\     |',
+'    |                    `.     /         |     |{|              ,-.,\     .|',
+'    |                     |   ,''           \   / `''            ,"     \     |',
+'30S-+                     |  /              |_''                |  __  /     +-30S',
+'    |                     | |                                  ''-''  `-''   \.|',
+'    |                     |/                                         "    / |',
+'    |                     \.                                             ''  |',
+'60S-+                                                                       +-60S',
+'    |                      ,/            ______._.--._ _..---.---------._   |',
+'    |     ,-----"-..?----_/ )      __,-''"             "                  (  |',
+'    |-.._(                  `-----''                                       `-|',
+'90S-+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-90S',
+'    Map 1998 Matthew Thomas.|Freely usable as long as this|line is included.|',
+'    |     |     |     |     |     |     |     |     |     |     |     |     |',
+'   180   150W  120W  90W   60W   30W   000   30E   60E   90E   120E  150E  180',
+'-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----'
+)
+
+Write-Host "$ESC[?25l" -NoNewline
+$mapOffsetX = 5
+$mapWidth = 83
+
+for ($i = 0; $i -lt $worldMap.Count; $i++) {
+    try {
+        [Console]::SetCursorPosition($mapOffsetX, $startY + $i)
+        if ($i -le 2 -or $i -ge 26) {
+            Write-Host "$cGrid$($worldMap[$i])" -NoNewline
+        } else {
+            $line = $worldMap[$i] -replace "^(\d+[NS]-?\+?\s*\|\s*)", "$cGrid`$1$cLand"
+            $line = $line -replace "(\s*\|\s*\+?-?\d*[NS]?)$", "$cGrid`$1"
+            Write-Host "$cLand$line" -NoNewline
+        }
+    } catch {}
+}
+
+$icbms = [System.Collections.Generic.List[PSCustomObject]]::new()
+$explosions = [System.Collections.Generic.List[PSCustomObject]]::new()
+$activeSubs = [System.Collections.Generic.List[PSCustomObject]]::new()
+$frames = 0
+$impacts = 0
+
+while (((Get-Date) - $simStart).TotalSeconds -lt 20) {
+    $frames++
+
+    $timeSecs = [math]::Round(((Get-Date) - $simStart).TotalSeconds)
+    try {
+        [Console]::SetCursorPosition(2, $startY - 2)
+        if ($timeSecs % 2 -eq 0) { Write-Host "$cRed[ DEFCON 1 ]" -NoNewline }
+        else { Write-Host "$cWhite[ DEFCON 1 ]" -NoNewline }
+        [Console]::SetCursorPosition(17, $startY - 2)
+        Write-Host "$cYellow CASUALTIES: $(($impacts * 5.2).ToString('N1')) M " -NoNewline
+    } catch {}
+
+    if ((Get-Random -Max 100) -gt 85 -and $activeSubs.Count -lt 15) {
+        $subX = Get-Random -Min 6 -Max ($mapWidth - 6)
+        $subY = Get-Random -Min 4 -Max 24
+
+        if ($worldMap[$subY][$subX] -eq ' ') {
+            $activeSubs.Add([PSCustomObject]@{ X = $mapOffsetX + $subX; Y = $startY + $subY; Char = "▲" })
+            try {
+                [Console]::SetCursorPosition($mapOffsetX + $subX, $startY + $subY)
+                Write-Host "$cRed▲" -NoNewline
+            } catch {}
+        }
+    }
+
+    if ((Get-Random -Max 100) -gt 45) {
+        $origin = Get-Random -Max 5
+        $startX = 0; $startYc = 0
+
+        switch ($origin) {
+            0 { $startX = (Get-Random -Min 15 -Max 30); $startYc = $startY + (Get-Random -Min 5 -Max 13) }
+            1 { $startX = (Get-Random -Min 55 -Max 75); $startYc = $startY + (Get-Random -Min 4 -Max 8) }
+            2 { $startX = (Get-Random -Min 45 -Max 55); $startYc = $startY + (Get-Random -Min 5 -Max 10) }
+            3 { $startX = (Get-Random -Min 65 -Max 80); $startYc = $startY + (Get-Random -Min 10 -Max 17) }
+            4 {
+                if ($activeSubs.Count -gt 0) {
+                    $rndSub = $activeSubs[(Get-Random -Max $activeSubs.Count)]
+                    $startX = $rndSub.X - $mapOffsetX; $startYc = $rndSub.Y
+                } else {
+                    $startX = 20; $startYc = $startY + 6
+                }
+            }
+        }
+
+        $icbms.Add([PSCustomObject]@{
+            X = [double]($mapOffsetX + $startX);
+            Y = [double]$startYc;
+            TX = $mapOffsetX + (Get-Random -Minimum 5 -Maximum 78);
+            TY = $startY + (Get-Random -Minimum 4 -Maximum 24);
+            Step = 0.0;
+            MaxSteps = (Get-Random -Min 15 -Max 35);
+            Trail = [System.Collections.Generic.List[int[]]]::new()
+        })
+    }
+
+    for ($i = $icbms.Count - 1; $i -ge 0; $i--) {
+        $m = $icbms[$i]
+        $m.Step++
+
+        $t = $m.Step / $m.MaxSteps
+        if ($t -ge 1.0) {
+            $explosions.Add([PSCustomObject]@{ X = $m.TX; Y = $m.TY; Life = 6 })
+            $impacts++
+
+            foreach ($pos in $m.Trail) {
+                $tx = $pos[0]; $ty = $pos[1]
+                $mapRow = $ty - $startY
+                $mapCol = $tx - $mapOffsetX
+                $restoreChar = " "
+                $restoreColor = $cLand
+
+                $isSub = $false
+                foreach ($sub in $activeSubs) {
+                    if ($sub.X -eq $tx -and $sub.Y -eq $ty) { $restoreChar = "▲"; $restoreColor = $cRed; $isSub = $true; break }
+                }
+
+                if (-not $isSub -and $mapRow -ge 0 -and $mapRow -lt $worldMap.Count -and $mapCol -ge 0 -and $mapCol -lt $worldMap[$mapRow].Length) {
+                    $restoreChar = $worldMap[$mapRow][$mapCol]
+                    if ($mapRow -le 2 -or $mapRow -ge 26 -or $mapCol -le 4 -or $mapCol -ge 78) { $restoreColor = $cGrid }
+                }
+                try { [Console]::SetCursorPosition($tx, $ty); Write-Host "$restoreColor$restoreChar" -NoNewline } catch {}
+            }
+            $icbms.RemoveAt($i)
+            continue
+        }
+
+        $curX = $m.X + ($m.TX - $m.X) * $t
+        $arcHeight = 8.0
+        $curY = $m.Y + ($m.TY - $m.Y) * $t - ($arcHeight * [math]::Sin($t * [math]::PI))
+
+        $iX = [int][math]::Round($curX)
+        $iY = [int][math]::Round($curY)
+
+        if ($iY -ge $startY -and $iY -lt ($startY + $worldMap.Count)) {
+            try {
+                [Console]::SetCursorPosition($iX, $iY)
+                Write-Host "$cTrail*" -NoNewline
+                $m.Trail.Add([int[]]($iX, $iY))
+
+                if ($m.Trail.Count -gt 1) {
+                    $prev = $m.Trail[$m.Trail.Count - 2]
+                    [Console]::SetCursorPosition($prev[0], $prev[1])
+                    Write-Host "$cGrid." -NoNewline
+                }
+            } catch {}
+        }
+    }
+
+    for ($i = $explosions.Count - 1; $i -ge 0; $i--) {
+        $exp = $explosions[$i]
+        $exp.Life--
+
+        try {
+            [Console]::SetCursorPosition([int]$exp.X, [int]$exp.Y)
+            if ($exp.Life % 2 -eq 0) { Write-Host "$cWhite*" -NoNewline }
+            else { Write-Host "$cYellow*" -NoNewline }
+        } catch {}
+
+        if ($exp.Life -le 0) {
+            $mapRow = [int]$exp.Y - $startY
+            $mapCol = [int]$exp.X - $mapOffsetX
+            $restoreChar = " "
+            $restoreColor = $cLand
+
+            $isSub = $false
+            foreach ($sub in $activeSubs) {
+                if ($sub.X -eq [int]$exp.X -and $sub.Y -eq [int]$exp.Y) { $restoreChar = "▲"; $restoreColor = $cRed; $isSub = $true; break }
+            }
+
+            if (-not $isSub -and $mapRow -ge 0 -and $mapRow -lt $worldMap.Count -and $mapCol -ge 0 -and $mapCol -lt $worldMap[$mapRow].Length) {
+                $restoreChar = $worldMap[$mapRow][$mapCol]
+                if ($mapRow -le 2 -or $mapRow -ge 26 -or $mapCol -le 4 -or $mapCol -ge 78) { $restoreColor = $cGrid }
+            }
+            try { [Console]::SetCursorPosition([int]$exp.X, [int]$exp.Y); Write-Host "$restoreColor$restoreChar" -NoNewline } catch {}
+            $explosions.RemoveAt($i)
+        }
+    }
+
+    Start-Sleep -Milliseconds 40
+}
+
+for ($y = 0; $y -lt 35; $y++) {
+    try {
+        [Console]::SetCursorPosition(0, $startY + $y - 3)
+        Write-Host (" " * $width) -NoNewline
+    } catch {}
+}
+
+[Console]::SetCursorPosition(0, $startY)
+
+Invoke-WoprTyping -text "A STRANGE GAME. THE ONLY WINNING MOVE IS NOT TO PLAY." -baseDelay 110 -pause 1500
+Invoke-WoprTyping -text "HOW ABOUT A NICE GAME OF CHESS?" -baseDelay 110 -pause 2500
+
+Write-Host "$ESC[?25h$cReset" -NoNewline
+[Console]::SetCursorPosition(0, [Console]::CursorTop + 2)
+Write-Diag "Stabilization complete. Memory optimized. Transitioning to HUD..." "STARTUP"
+# ==============================================================================
+
+Start-Sleep -Seconds 3
+
+Clear-Host
+
+$dumpRef = $null
+while ([DeepVisibilitySensor]::EventQueue.TryDequeue([ref]$dumpRef)) {
+}
+
+Write-Diag "Binding Kernel ETW Trace Session..." "INFO"
+[DeepVisibilitySensor]::StartSession()
+Start-Sleep -Seconds 1
+
+$totalEvents = 0
+$totalAlerts = 0
+$LastHeartbeat = Get-Date
+$eventCount = 0
+$SensorBlinded = $false
 $LastPolicySync = Get-Date
 $LastHeartbeatWrite = Get-Date
+$lastLightGC = Get-Date
+$lastUebaCleanup = Get-Date
+$LastEventReceived = Get-Date
 
-[Console]::SetCursorPosition(0, 9)
+$dashboardDirty = $true
+Draw-Dashboard -Events 0 -MlEvals 0 -Alerts 0 -EtwHealth "ONLINE" -MlHealth "Native DLL"
+Draw-AlertWindow
+Draw-StartupWindow
 
 # ====================== MAIN ORCHESTRATOR LOOP ======================
 try {
@@ -1163,6 +1673,8 @@ try {
         $jsonStr = ""
 
         while (($maxDequeue-- -gt 0) -and [DeepVisibilitySensor]::EventQueue.TryDequeue([ref]$jsonStr)) {
+            $LastEventReceived = $now
+            $eventCount++
             try {
                 if ([string]::IsNullOrWhiteSpace($jsonStr)) { continue }
 
@@ -1206,58 +1718,29 @@ try {
                                 continue
                             }
 
-                            if ($alert.severity -eq "CRITICAL") {
-                                [DeepVisibilitySensor]::TotalAlertsGenerated++
-                                Add-AlertMessage "CRITICAL THREAT: $($alert.reason)" $cRed
-                                Write-Diag "[!] [$($alert.confidence)%] CRITICAL DETECTION: $($alert.reason)" "CRITICAL"
-                            } elseif ($alert.severity -eq "HIGH") {
-                                [DeepVisibilitySensor]::TotalAlertsGenerated++
-                                Add-AlertMessage "HIGH RISK: $($alert.reason)" $cYellow
-                            } elseif ($alert.severity -eq "WARNING") {
-                                Add-AlertMessage "WARNING: $($alert.reason)" $cDark
-                            }
-
                             if ($alert.severity -match "CRITICAL|HIGH|WARNING") {
+                                [DeepVisibilitySensor]::TotalAlertsGenerated++
+
                                 $MitreTag = "Unknown"
-                                # 1. Look for bracketed Sigma/Rust tags (e.g., [T1003.001])
-                                if ($alert.reason -match "\[(.*?)\]") {
-                                    $MitreTag = $matches[1]
-                                }
-                                # 2. Fallback: Catch C#-injected categories (e.g., T1562.002: Attempted to...)
-                                elseif ($alert.reason -match "^(T\d{4}(?:\.\d{3})?)") {
-                                    $MitreTag = $matches[1]
-                                }
+                                if ($alert.reason -match "\[(.*?)\]") { $MitreTag = $matches[1] }
+                                elseif ($alert.reason -match "^(T\d{4}(?:\.\d{3})?)") { $MitreTag = $matches[1] }
 
-                                # Generate SIEM-specific context
-                                $EventGuid = [guid]::NewGuid().ToString()
-                                $TimeLocal = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
-                                $TimeUTC   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
-                                $Action    = if ($global:ArmedMode) { "Quarantined" } else { "Logged" }
+                                $confMap = @{ "CRITICAL" = 100; "HIGH" = 90; "WARNING" = 75 }
+                                $conf = if ($confMap.ContainsKey($alert.severity)) { $confMap[$alert.severity] } else { 50 }
 
-                                $logObj = "{" +
-                                    "`"EventID`":`"$EventGuid`", " +
-                                    "`"Timestamp_Local`":`"$TimeLocal`", " +
-                                    "`"Timestamp_UTC`":`"$TimeUTC`", " +
-                                    "`"Action`":`"$Action`", " +
-                                    $global:EnrichmentPrefix +
-                                    "`"Category`":`"ValidatedAlert`", " +
-                                    "`"Mitre`":`"$MitreTag`", " +
-                                    "`"Type`":`"ThreatDetection`", " +
-                                    "`"Process`":`"$($alert.process)`", " +
-                                    "`"ParentProcess`":`"$($alert.parent)`", " +
-                                    "`"CommandLine`":`"$($alert.cmd)`", " +
-                                    "`"PID`":$($alert.pid), " +
-                                    "`"TID`":$($alert.tid), " +
-                                    "`"Score`":$([math]::Round($alert.score, 2)), " +
-                                    "`"Severity`":`"$($alert.severity)`", " +
-                                    "`"Details`":`"$($alert.reason)`"}"
+                                $targetObj = if (-not [string]::IsNullOrEmpty($alert.destination)) { "$($alert.destination):$($alert.port)" } else { $alert.parent }
 
-                                $script:logBatch.Add($logObj)
-                            }
-
-                            if ($ArmedMode -and $alert.severity -eq "CRITICAL") {
-                                Invoke-ActiveDefense -ProcName $alert.process -PID_Id $alert.pid -TID_Id $alert.tid -TargetType "Process" -Reason $alert.reason
-                                Invoke-HostIsolation -Reason $alert.reason -TriggeringProcess $alert.process
+                                # Add to Unified Pipeline (handles UI, Defense, and JSON generation automatically)
+                                Submit-SensorAlert -Type "ML_Anomaly" `
+                                    -TargetObject $targetObj `
+                                    -Image $alert.process `
+                                    -Flags $alert.reason `
+                                    -Confidence $conf `
+                                    -PID_Id $alert.pid `
+                                    -TID_Id $alert.tid `
+                                    -AttckMapping $MitreTag `
+                                    -CommandLine $alert.cmd `
+                                    -RawJson $jsonStr
                             }
                         }
                     }
@@ -1276,24 +1759,48 @@ try {
                 if ($evt.Provider -eq "HealthCheck") { $LastHeartbeat = $now; continue }
                 if ($evt.Provider -eq "Error") { Add-AlertMessage "CORE ENGINE CRASH: $($evt.Message)" $cRed; continue }
 
-                if ($evt.Category -eq "StaticAlert") {
+                # Catch ALL native C# alerts (Sigma_Match, T1055, StaticAlert)
+                if ($evt.Category -and $evt.Category -notmatch "RawEvent|UEBA") {
                     [DeepVisibilitySensor]::TotalAlertsGenerated++
-                    $enrichedJson = $jsonStr.Replace("{`"Category`"", "{$global:EnrichmentPrefix`"Category`"")
-                    $script:logBatch.Add($enrichedJson)
 
-                    if ($evt.Type -match "SensorTampering|ProcessHollowing|PendingRename|UnbackedModule|EncodedCommand|ThreatIntel_Driver") {
-                        Add-AlertMessage "CRITICAL: $($evt.Type) ($($evt.Process))" $cRed
-                        Invoke-ActiveDefense -ProcName $evt.Process -PID_Id $evt.PID -TID_Id $evt.TID -TargetType "Process" -Reason "Critical Execution/Injection/Persistence"
-                    } else {
-                        Add-AlertMessage "$($evt.Type): $($evt.Details)" $cYellow
-                    }
+                    $conf = if ($evt.Type -match "SensorTampering|ProcessHollowing|PendingRename|UnbackedModule|EncodedCommand|ThreatIntel_Driver") { 100 } else { 85 }
+                    $pidExtract = 0; if ($evt.Process -match "PID:(\d+)") { $pidExtract = [int]$matches[1] } else { $pidExtract = $evt.PID }
+
+                    # Map the Mitre tag if the C# engine provided one in the Category
+                    $mitre = if ($evt.Category -match "^T\d{4}") { $evt.Category } else { "N/A" }
+
+                    # Extract the alert text depending on which C# constructor sent it
+                    $alertText = if ($evt.Details) { $evt.Details } elseif ($evt.Reason) { $evt.Reason } else { "Suspicious Activity" }
+
+                    Submit-SensorAlert -Type "Static_Detection" `
+                        -TargetObject $evt.Type `
+                        -Image $evt.Process `
+                        -Flags $alertText `
+                        -Confidence $conf `
+                        -PID_Id $pidExtract `
+                        -TID_Id $evt.TID `
+                        -AttckMapping $mitre `
+                        -RawJson $jsonStr
                 }
             } catch {
                 Write-Diag "DEQUEUE ERROR: $($_.Exception.Message)" "ERROR"
             }
         }
 
+        # Transfer Deduplicated Alerts into the SIEM Batch Array
+        foreach ($alert in $global:cycleAlerts.Values) {
+            $global:dataBatch.Add($alert)
+        }
+        $global:cycleAlerts.Clear()
+
         # BATCH SIEM FORWARDING (Actionable Alerts & Active Defense)
+        if ($global:dataBatch.Count -gt 0) {
+            $batchOutput = ($global:dataBatch | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`r`n"
+            [System.IO.File]::AppendAllText($LogPath, $batchOutput + "`r`n")
+            $global:dataBatch.Clear()
+        }
+
+        # Preserve legacy action logging
         if ($script:logBatch.Count -gt 0) {
             [System.IO.File]::AppendAllText($LogPath, ($script:logBatch -join "`r`n") + "`r`n")
             $script:logBatch.Clear()
@@ -1305,7 +1812,21 @@ try {
             $script:uebaBatch.Clear()
         }
 
-        # ETW HEALTH CANARY: Write a temp file every 60 seconds to prove the Kernel Listener is alive
+        # === LIGHT MEMORY PROTECTION: GARBAGE COLLECTION (every 60 seconds) ===
+        if (($now - $lastLightGC).TotalSeconds -ge 60) {
+            [System.GC]::Collect(1, [System.GCCollectionMode]::Optimized)
+            $lastLightGC = $now
+        }
+
+        # === DEEP MEMORY PROTECTION: GARBAGE COLLECTION (every 30 minutes) ===
+        if (($now - $lastUebaCleanup).TotalMinutes -ge 30) {
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            $lastUebaCleanup = $now
+            Write-Diag "Deep Memory protection executed. Caches flushed and GC forced." "INFO"
+        }
+
+        # ETW HEALTH CANARY & WATCHDOG EVALUATION
         if (($now - $LastHeartbeatWrite).TotalSeconds -ge 60) {
             $LastHeartbeatWrite = $now
             $CanaryPath = Join-Path "C:\ProgramData\DeepSensor\Data" "deepsensor_canary.tmp"
@@ -1313,13 +1834,58 @@ try {
             Remove-Item -Path $CanaryPath -Force -ErrorAction SilentlyContinue
         }
 
-        # DRAW HUD WITH C# STATIC COUNTERS
-        $eState = if (($now - $LastHeartbeat).TotalSeconds -le 180) { "Good" } else { "BAD" }
-        $totalParsed = [DeepVisibilitySensor]::TotalEventsParsed
-        $totalAlerts = [DeepVisibilitySensor]::TotalAlertsGenerated
-        $totalMlEvals = [DeepVisibilitySensor]::TotalMlEvals
+        $tamperStatus = "Good"
 
-        Draw-Dashboard -Events $totalParsed -MlEvals $totalMlEvals -Alerts $totalAlerts -EtwHealth $eState -MlHealth "Native DLL"
+        # 1. Did the background Watchdog flag a buffer exhaustion?
+        if ($jsonStr -match "SENSOR_BLINDING_DETECTED") { $tamperStatus = "BAD" }
+
+        # 2. Is the C# session still alive and responding to canaries?
+        if (-not [DeepVisibilitySensor]::IsSessionHealthy() -or (($now - $LastHeartbeat).TotalSeconds -gt 120)) { $tamperStatus = "BAD" }
+
+        # 3. Have we been starved of events?
+        if (($now - $LastEventReceived).TotalMinutes -gt 3) { $tamperStatus = "BAD" }
+
+        $currentTotalEvents = [DeepVisibilitySensor]::TotalEventsParsed
+        $currentTotalAlerts = [DeepVisibilitySensor]::TotalAlertsGenerated
+
+        # Only burn CPU to redraw the HUD if telemetry counts actually incremented or health changed
+        if ($dashboardDirty -or $currentTotalEvents -ne $totalEvents -or $currentTotalAlerts -ne $totalAlerts -or $tamperStatus -eq "BAD") {
+            $totalEvents = $currentTotalEvents
+            $totalAlerts = $currentTotalAlerts
+
+            Draw-Dashboard -Events $totalEvents -MlEvals ([DeepVisibilitySensor]::TotalMlEvals) -Alerts $totalAlerts -EtwHealth $tamperStatus -MlHealth "Native DLL"
+            $dashboardDirty = $false
+            $eventCount = 0
+        }
+
+        if ($tamperStatus -eq "BAD") {
+            if (-not $SensorBlinded) {
+                $SensorBlinded = $true
+                Add-AlertMessage "CRITICAL ALARM: SENSOR BLINDED. INITIATING AUTO-RECOVERY..." $cRed
+                Write-Diag "SENSOR BLINDED: ETW thread unresponsive. Initiating auto-recovery." "ERROR"
+            }
+
+            # --- ACTIVE AUTO-RECOVERY ENGINE ---
+            try {
+                Write-Diag "Auto-Recovery: Tearing down dead ETW session..." "INFO"
+                [DeepVisibilitySensor]::StopSession()
+
+                # OS-LEVEL FAILSAFE: Force terminate the trace via logman to prevent Zombie lockups
+                logman stop "NT Kernel Logger" -ets -ErrorAction SilentlyContinue
+                logman stop "DeepSensor_UserMode" -ets -ErrorAction SilentlyContinue
+
+                Start-Sleep -Seconds 2
+
+                Write-Diag "Auto-Recovery: Re-initializing native ETW session..." "INFO"
+                [DeepVisibilitySensor]::StartSession()
+
+                $LastEventReceived = $now # Reset the starvation timer
+                $SensorBlinded = $false
+                Add-AlertMessage "SENSOR RECOVERED: ETW SESSION RESTORED" $cGreen
+            } catch {
+                Write-Diag "Auto-Recovery failed: $($_.Exception.Message). Retrying next cycle." "ERROR"
+            }
+        }
 
         Start-Sleep -Milliseconds 250
     }
@@ -1333,19 +1899,27 @@ try {
 
     # C# now handles the entire synchronized teardown of the DLL and ETW
     Write-Host "    [*] Finalizing Kernel Telemetry & ML Database..." -ForegroundColor Gray
-    try { [DeepVisibilitySensor]::StopSession() } catch {}
+    try {
+        [DeepVisibilitySensor]::StopSession()
+        [DeepVisibilitySensor]::TeardownEngine()
+    } catch {}
 
     Write-Host "    [*] Unlocking project directory permissions..." -ForegroundColor Gray
-    $null = icacls $ScriptDir /reset /T /C /Q
+    if ($null -ne $ScriptDir) {
+        $null = icacls $ScriptDir /reset /T /C /Q
+    }
 
     Write-Host "    [*] Cleaning up centralized library dependencies..." -ForegroundColor Gray
+
+    # Strictly define and guard the Dependencies path
     $DependenciesPath = "C:\ProgramData\DeepSensor\Dependencies"
-    if (Test-Path $DependenciesPath) {
+    if ($null -ne $DependenciesPath -and (Test-Path $DependenciesPath)) {
         Remove-Item -Path $DependenciesPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    # Strictly define and guard the Staging path
     $StagingPath = "C:\ProgramData\DeepSensor\Staging"
-    if (Test-Path $StagingPath) {
+    if ($null -ne $StagingPath -and (Test-Path $StagingPath)) {
         Remove-Item -Path "$StagingPath\*.zip" -Force -ErrorAction SilentlyContinue
     }
 

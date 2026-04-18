@@ -19,6 +19,10 @@ use extended_isolation_forest::{Forest, ForestOptions};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::{Mutex, Arc, RwLock};
+use std::panic;
+use std::backtrace::Backtrace;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 // ============================================================================
 // DATA STRUCTURES
@@ -40,6 +44,10 @@ struct IncomingEvent {
     path: String,
     #[serde(alias = "Details", default)]
     details: String,
+    #[serde(alias = "Destination", default)]
+    destination: String,
+    #[serde(alias = "Port", default)]
+    port: i32,
     #[serde(alias = "PID", default)]
     pid: i32,
     #[serde(alias = "TID", default)]
@@ -51,12 +59,33 @@ pub struct Alert {
     pub process: String,
     pub parent: String,
     pub cmd: String,
+    pub destination: String,
+    pub port: i32,
     pub pid: i32,
     pub tid: i32,
     pub score: f64,
     pub confidence: f64,
     pub severity: String,
     pub reason: String,
+}
+
+// ARCHITECTURAL CLEANUP: Helper function for rapid alert generation
+impl Alert {
+    fn new(evt: &IncomingEvent, score: f64, confidence: f64, severity: &str, reason: String) -> Self {
+        Alert {
+            process: evt.process.clone(),
+            parent: evt.parent.clone(),
+            cmd: evt.cmd.clone(),
+            destination: evt.destination.clone(),
+            port: evt.port,
+            pid: evt.pid,
+            tid: evt.tid,
+            score,
+            confidence,
+            severity: severity.to_string(),
+            reason,
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -112,11 +141,14 @@ impl BehavioralEngine {
         let db_path = format!(r"{}\DeepSensor_UEBA.db", secure_dir);
 
         let conn = Connection::open(&db_path).unwrap_or_else(|_| Connection::open_in_memory().unwrap());
-        // Add synchronous = NORMAL for high-speed WAL performance
         conn.execute_batch("
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
-        ").unwrap();
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = -64000;
+            PRAGMA mmap_size = 3000000000;
+            PRAGMA wal_autocheckpoint = 1000;
+        ").expect("Failed to optimize SQLite DB pragmas");
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS ueba_temporal_baselines (
@@ -124,7 +156,7 @@ impl BehavioralEngine {
                 parent_process TEXT,
                 process TEXT,
                 rule TEXT,
-                cmd_structure TEXT,
+                target_struct TEXT,
                 event_count INTEGER DEFAULT 1,
                 last_seen REAL,
                 mean_delta REAL DEFAULT 0.0,
@@ -132,6 +164,12 @@ impl BehavioralEngine {
             )",
             [],
         ).unwrap();
+
+        let _ = conn.execute_batch("
+            PRAGMA wal_checkpoint(FULL);
+            PRAGMA optimize;
+            VACUUM;
+        ");
 
         let mut engine = BehavioralEngine {
             trusted_binaries: HashSet::new(),
@@ -203,8 +241,8 @@ impl BehavioralEngine {
         })
     }
 
-    fn generate_structural_hash(&self, parent: &str, process: &str, cmd: &str, rule: &str) -> (String, String) {
-        let mut clean = self.regex_guid.replace_all(cmd, "<GUID>").to_string();
+    fn generate_structural_hash(&self, parent: &str, process: &str, target_data: &str, rule: &str) -> (String, String) {
+        let mut clean = self.regex_guid.replace_all(target_data, "<GUID>").to_string();
         clean = self.regex_hex.replace_all(&clean, "<HEX>").to_string();
         clean = self.regex_num.replace_all(&clean, "<NUM>").to_string();
         clean = self.regex_temp.replace_all(&clean, "<TEMP>").to_string();
@@ -234,7 +272,7 @@ impl BehavioralEngine {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
 
         if evt.event_type == "Synthetic_Health_Check" {
-            alerts.push(Alert { process: "System".to_string(), parent: "".to_string(), cmd: "".to_string(), pid: 0, tid: 0, score: 1.0, confidence: 100.0, severity: "INFO".to_string(), reason: "HEALTH_OK".to_string() });
+            alerts.push(Alert { process: "System".to_string(), parent: "".to_string(), cmd: "".to_string(), destination: "".to_string(), port: 0, pid: 0, tid: 0, score: 1.0, confidence: 100.0, severity: "INFO".to_string(), reason: "HEALTH_OK".to_string() });
             return alerts;
         }
 
@@ -245,14 +283,14 @@ impl BehavioralEngine {
         if evt.event_type == "ProcessStart" || evt.event_type == "RegistryWrite" || evt.event_type == "FileIOCreate" {
             let lsass_keywords = ["procdump", "comsvcs", "mimikatz", "sekurlsa::", "lsadump::", "nanodump", "dumpert"];
             if lsass_keywords.iter().any(|&k| cmd_lower.contains(k)) {
-                alerts.push(Alert { process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid, score: 10.0, confidence: 100.0, severity: "CRITICAL".to_string(), reason: "[T1003.001] CRITICAL: LSASS Credential Dumping (Static Override)".to_string() });
+                alerts.push(Alert::new(&evt, 10.0, 100.0, "CRITICAL", "[T1003.001] CRITICAL: LSASS Credential Dumping (Static Override)".to_string()));
                 return alerts;
             }
 
             if ["svchost.exe", "explorer.exe", "lsass.exe", "winlogon.exe", "services.exe"].contains(&proc_lower.as_str()) {
                 let injection_keywords = ["virtualalloc", "createremotethread", "writeprocessmemory", "reflective", "processhollow", "inject"];
                 if injection_keywords.iter().any(|&k| cmd_lower.contains(k)) {
-                    alerts.push(Alert { process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid, score: 10.0, confidence: 100.0, severity: "CRITICAL".to_string(), reason: "[T1055] CRITICAL: Reflective Code Injection (Static Override)".to_string() });
+                    alerts.push(Alert::new(&evt, 10.0, 100.0, "CRITICAL", "[T1055] CRITICAL: Reflective Code Injection (Static Override)".to_string()));
                     return alerts;
                 }
             }
@@ -273,11 +311,7 @@ impl BehavioralEngine {
             } else if tracker.count > 50 {
                 let avg_entropy = tracker.entropy_sum / tracker.count as f64;
                 if avg_entropy > 5.2 {
-                    alerts.push(Alert {
-                        process: evt.process.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid,
-                        score: avg_entropy, confidence: 95.0, severity: "CRITICAL".to_string(),
-                        reason: format!("[T1486] Ransomware/Wiper Burst: {} I/O ops/sec (Entropy: {:.2})", tracker.count, avg_entropy)
-                    });
+                    alerts.push(Alert::new(&evt, avg_entropy, 95.0, "CRITICAL", format!("[T1486] Ransomware/Wiper Burst: {} I/O ops/sec (Entropy: {:.2})", tracker.count, avg_entropy)));
                     tracker.count = 0;
                     tracker.entropy_sum = 0.0;
                 }
@@ -299,11 +333,20 @@ impl BehavioralEngine {
 
             self.rule_process_map.entry(rule.clone()).or_insert_with(HashSet::new).insert(proc_lower.clone());
             if self.rule_process_map.get(&rule).unwrap().len() >= 5 {
-                alerts.push(Alert { process: "GLOBAL".to_string(), parent: "".to_string(), cmd: "".to_string(), pid: 0, tid: 0, score: -2.0, confidence: 100.0, severity: "INFO".to_string(), reason: rule });
+                alerts.push(Alert { process: "GLOBAL".to_string(), parent: "".to_string(), cmd: "".to_string(), destination: "".to_string(), port: 0, pid: 0, tid: 0, score: -2.0, confidence: 100.0, severity: "INFO".to_string(), reason: rule });
                 return alerts;
             }
 
-            let (ctx_hash, cmd_struct) = self.generate_structural_hash(&evt.parent, &proc_lower, &evt.cmd, &rule);
+            // Unifies OS and Network Telemetry
+            let target_data = if !evt.destination.is_empty() {
+                format!("{}:{}", evt.destination, evt.port)
+            } else if !evt.cmd.is_empty() {
+                evt.cmd.clone()
+            } else {
+                evt.path.clone()
+            };
+
+            let (ctx_hash, target_struct) = self.generate_structural_hash(&evt.parent, &proc_lower, &target_data, &rule);
 
             let b_data = self.ueba_baseline.entry(ctx_hash.clone()).or_insert(UebaBaseline {
                 count: 0, last_seen: now, mean_delta: 0.0, m2_delta: 0.0
@@ -323,10 +366,10 @@ impl BehavioralEngine {
             let std_dev = variance.sqrt();
 
             self.conn.execute(
-                "INSERT INTO ueba_temporal_baselines (context_hash, parent_process, process, rule, cmd_structure, event_count, last_seen, mean_delta, m2_delta)
+                "INSERT INTO ueba_temporal_baselines (context_hash, parent_process, process, rule, target_struct, event_count, last_seen, mean_delta, m2_delta)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(context_hash) DO UPDATE SET event_count=excluded.event_count, last_seen=excluded.last_seen, mean_delta=excluded.mean_delta, m2_delta=excluded.m2_delta",
-                params![ctx_hash, evt.parent, proc_lower, rule, cmd_struct, b_data.count, b_data.last_seen, b_data.mean_delta, b_data.m2_delta]
+                params![ctx_hash, evt.parent, proc_lower, rule, target_struct, b_data.count, b_data.last_seen, b_data.mean_delta, b_data.m2_delta]
             ).unwrap_or_default();
 
             let is_automated = std_dev < 300.0;
@@ -339,20 +382,10 @@ impl BehavioralEngine {
 
             if b_data.count < trust_threshold {
                 Self::log_ueba_audit("LEARNING", &proc_lower, &rule, b_data.count, std_dev);
-                // Return the alert to the SIEM while we learn its behavior
-                alerts.push(Alert {
-                    process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid,
-                    score: 0.0, confidence: 50.0, severity: initial_severity.to_string(),
-                    reason: format!("{}: {} (Learning: {}/{})", evt.category, rule, b_data.count, trust_threshold)
-                });
+                alerts.push(Alert::new(&evt, 0.0, 50.0, initial_severity, format!("{}: {} (Learning: {}/{})", evt.category, rule, b_data.count, trust_threshold)));
             } else if b_data.count == trust_threshold {
                 Self::log_ueba_audit("THRESHOLD", &proc_lower, &rule, b_data.count, std_dev);
-                // Trigger the permanent C# boundary suppression
-                alerts.push(Alert {
-                    process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid,
-                    score: -1.0, confidence: 100.0, severity: "INFO".to_string(),
-                    reason: format!("UEBA SECURED: {} | Mode: {} Baseline.", rule, if is_automated { "Automated" } else { "Manual" })
-                });
+                alerts.push(Alert::new(&evt, -1.0, 100.0, "INFO", format!("UEBA SECURED: {} | Mode: {} Baseline.", rule, if is_automated { "Automated" } else { "Manual" })));
             } else {
                 Self::log_ueba_audit("SUPPRESSED", &proc_lower, &rule, b_data.count, std_dev);
             }
@@ -377,11 +410,14 @@ impl BehavioralEngine {
 
         // Only flag T1027 if entropy is high AND it doesn't look like standard developer telemetry
         if text_data.len() > 50 && entropy > 5.2 && !is_structured_telemetry && (evt.event_type == "ProcessStart" || evt.event_type == "RegistryWrite") {
-            alerts.push(Alert {
-                process: proc_lower.clone(), parent: evt.parent.clone(), cmd: evt.cmd.clone(), pid: evt.pid, tid: evt.tid, score: entropy, confidence: 85.0,
-                severity: if entropy > 5.5 { "CRITICAL".to_string() } else { "HIGH".to_string() },
-                reason: format!("[T1027] Suspicious packed/encoded payload in {} (Entropy {:.2})", evt.event_type, entropy)
-            });
+            let severity_str = if entropy > 5.5 { "CRITICAL" } else { "HIGH" };
+            alerts.push(Alert::new(
+                &evt,
+                entropy,
+                85.0,
+                severity_str,
+                format!("[T1027] Suspicious packed/encoded payload in {} (Entropy {:.2})", evt.event_type, entropy)
+            ));
         }
 
         let current_feat = [entropy, tuple_score, path_depth];
@@ -398,7 +434,9 @@ impl BehavioralEngine {
         // Asynchronous Forest Rebuild
         let needs_rebuild = {
             let forest_read = self.cached_forest.read().unwrap();
-            self.history.len() > 200 && (forest_read.is_none() || self.fit_counter > 20000)
+            self.history.len() > 200
+                && (forest_read.is_none() || self.fit_counter > 20000)
+                && !*self.is_training.read().unwrap()
         };
 
         if needs_rebuild {
@@ -446,17 +484,13 @@ impl BehavioralEngine {
                     (severity.to_string(), format!("Behavioral Lineage Outlier: Anomalous chain by {}", proc_lower))
                 };
 
-                alerts.push(Alert {
-                    process: evt.process.clone(),
-                    parent: evt.parent.clone(),
-                    cmd: evt.cmd.clone(),
-                    pid: evt.pid,
-                    tid: evt.tid,
+                alerts.push(Alert::new(
+                    &evt,
                     score,
                     confidence,
-                    severity: final_severity,
-                    reason: details
-                });
+                    &final_severity,
+                    details
+                ));
             }
         }
         alerts
@@ -469,6 +503,21 @@ impl BehavioralEngine {
 
 #[no_mangle]
 pub extern "C" fn init_engine() -> *mut Mutex<BehavioralEngine> {
+    panic::set_hook(Box::new(|panic_info| {
+        let backtrace = Backtrace::force_capture();
+        let msg = match panic_info.payload().downcast_ref::<&'static str>() {
+            Some(s) => *s,
+            None => match panic_info.payload().downcast_ref::<String>() {
+                Some(s) => &s[..],
+                None => "Unknown Rust Panic",
+            }
+        };
+
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("C:\\ProgramData\\DeepSensor\\Logs\\Rust_Fatal.log") {
+            let _ = writeln!(file, "PANIC: {}\nLOCATION: {:?}\nBACKTRACE:\n{}", msg, panic_info.location(), backtrace);
+        }
+    }));
+
     let engine = BehavioralEngine::new();
     Box::into_raw(Box::new(Mutex::new(engine)))
 }
@@ -490,15 +539,17 @@ pub extern "C" fn evaluate_telemetry(
 
     // Parse an array of events instead of a single object
     let events: Vec<IncomingEvent> = match serde_json::from_str(json_str) {
-        Ok(e) => e,
-        Err(_) => {
-            // Fallback: If C# sends a single object, wrap it in a Vec
-            match serde_json::from_str::<IncomingEvent>(json_str) {
-                Ok(single) => vec![single],
-                Err(_) => return std::ptr::null_mut(),
+            Ok(evts) => evts,
+            Err(e) => {
+                let err_msg = format!("JSON Parse Error: {}", e);
+                let response = OutgoingResponse { alerts: None, daemon_error: Some(err_msg) };
+
+                match serde_json::to_string(&response) {
+                    Ok(safe_json) => return CString::new(safe_json).unwrap().into_raw(),
+                    Err(_) => return std::ptr::null_mut(),
+                }
             }
-        }
-    };
+        };
 
     let engine_mutex = unsafe { &*engine_ptr };
 
