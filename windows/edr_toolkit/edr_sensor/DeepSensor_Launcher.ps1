@@ -1311,7 +1311,6 @@ try {
     Sync-YaraIntelligence
     $YaraRulesPath = if ($OfflineRepoPath) { Join-Path $OfflineRepoPath "yara_rules" } else { Join-Path $ScriptDir "yara_rules" }
     [DeepVisibilitySensor]::InitializeYaraMatrices($YaraRulesPath)
-    [DeepVisibilitySensor]::StartSession()
     [DeepVisibilitySensor]::IsArmed = $ArmedMode.IsPresent
 
 } catch {
@@ -1600,7 +1599,6 @@ Write-Diag "Stabilization complete. Memory optimized. Transitioning to HUD..." "
 # ==============================================================================
 
 Start-Sleep -Seconds 3
-
 Clear-Host
 
 $dumpRef = $null
@@ -1611,18 +1609,11 @@ Write-Diag "Binding Kernel ETW Trace Session..." "INFO"
 [DeepVisibilitySensor]::StartSession()
 Start-Sleep -Seconds 1
 
-$totalEvents = 0
-$totalAlerts = 0
-$LastHeartbeat = Get-Date
-$eventCount = 0
 $SensorBlinded = $false
 $LastPolicySync = Get-Date
-$LastHeartbeatWrite = Get-Date
 $lastLightGC = Get-Date
 $lastUebaCleanup = Get-Date
-$LastEventReceived = Get-Date
 
-$dashboardDirty = $true
 Draw-Dashboard -Events 0 -MlEvals 0 -Alerts 0 -EtwHealth "ONLINE" -MlHealth "Native DLL"
 Draw-AlertWindow
 Draw-StartupWindow
@@ -1630,7 +1621,16 @@ Draw-StartupWindow
 # ====================== MAIN ORCHESTRATOR LOOP ======================
 try {
     try { [console]::TreatControlCAsInput = $true } catch {}
+    Write-Diag "[+] Deep Visibility Sensor is monitoring the situation." "INFO"
     Write-Diag "    [*] Press 'Ctrl+C' or 'Q' to gracefully terminate the sensor." "STARTUP"
+
+    $dashboardDirty = $true
+    $totalEvents = 0
+    $totalAlerts = 0
+    $eventCount = 0
+    $LastHeartbeat = Get-Date
+    $LastEventReceived = Get-Date
+    $LastHeartbeatWrite = Get-Date
 
     while ($true) {
         $now = Get-Date
@@ -1859,32 +1859,23 @@ try {
         }
 
         if ($tamperStatus -eq "BAD") {
-            if (-not $SensorBlinded) {
-                $SensorBlinded = $true
-                Add-AlertMessage "CRITICAL ALARM: SENSOR BLINDED. INITIATING AUTO-RECOVERY..." $cRed
-                Write-Diag "SENSOR BLINDED: ETW thread unresponsive. Initiating auto-recovery." "ERROR"
-            }
-
-            # --- ACTIVE AUTO-RECOVERY ENGINE ---
-            try {
-                Write-Diag "Auto-Recovery: Tearing down dead ETW session..." "INFO"
-                [DeepVisibilitySensor]::StopSession()
-
-                # OS-LEVEL FAILSAFE: Force terminate the trace via logman to prevent Zombie lockups
-                logman stop "NT Kernel Logger" -ets -ErrorAction SilentlyContinue
-                logman stop "DeepSensor_UserMode" -ets -ErrorAction SilentlyContinue
-
-                Start-Sleep -Seconds 2
-
-                Write-Diag "Auto-Recovery: Re-initializing native ETW session..." "INFO"
-                [DeepVisibilitySensor]::StartSession()
-
-                $LastEventReceived = $now # Reset the starvation timer
-                $SensorBlinded = $false
-                Add-AlertMessage "SENSOR RECOVERED: ETW SESSION RESTORED" $cGreen
+            Write-Diag "SENSOR BLINDED: ETW thread unresponsive. Initiating auto-recovery." "ERROR"
+            Write-Diag "Auto-Recovery: Tearing down dead ETW session..." "INFO"
+            try { [DeepVisibilitySensor]::StopSession() } catch {}
+            
+            Start-Sleep -Seconds 2
+            
+            Write-Diag "Auto-Recovery: Re-building memory pointers & initializing native ETW session..." "INFO"
+            try { 
+                [DeepVisibilitySensor]::StartSession() 
             } catch {
-                Write-Diag "Auto-Recovery failed: $($_.Exception.Message). Retrying next cycle." "ERROR"
+                Write-Diag "Auto-Recovery FAILED: $($_.Exception.Message)" "CRITICAL"
             }
+            
+            $LastHeartbeat = Get-Date
+            $LastEventReceived = Get-Date
+            $LastHeartbeatWrite = Get-Date
+            $tamperStatus = "Good"
         }
 
         Start-Sleep -Milliseconds 250
