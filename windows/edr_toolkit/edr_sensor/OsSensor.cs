@@ -509,7 +509,6 @@ public class DeepVisibilitySensor {
         _dllPath = dllPath;
         SensorPid = currentPid;
         HostComputerName = Environment.MachineName;
-        HostIP           = "0.0.0.0";           // fallback instead of "unknown"
         HostOS           = "Windows";
         SensorUser       = Environment.UserDomainName + "\\" + Environment.UserName;
 

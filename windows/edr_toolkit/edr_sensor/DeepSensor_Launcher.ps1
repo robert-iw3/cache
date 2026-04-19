@@ -66,14 +66,15 @@ logman stop "NT Kernel Logger" -ets >$null 2>&1
 # 2. GLOBAL CONSTANTS & PATHS
 # ======================================================================
 
-$global:HostIP = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.InterfaceIndex -ne 1 -and $_.PrefixOrigin -ne "WellKnown" } |
-    Select-Object -First 1).IPAddress ?? "0.0.0.0"
 $Global:ProgData = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
+$activeRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+if ($activeRoute) {
+    $IpAddress = (Get-NetIPAddress -InterfaceIndex $activeRoute.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress
+}
+if (-not $IpAddress) { $IpAddress = "Unknown" }
+$OsContext = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption -replace 'Microsoft ', ''
+$userStr = "$env:USERDOMAIN\$env:USERNAME".Replace("\", "\\")
 $global:EnrichmentPrefix = "`"ComputerName`":`"$env:COMPUTERNAME`", `"IP`":`"$IpAddress`", `"OS`":`"$OsContext`", `"SensorUser`":`"$userStr`", "
-$global:ComputerName = $env:COMPUTERNAME
-$global:HostIP = $IpAddress
-$global:SensorUser = $userStr
 $global:cycleAlerts = [System.Collections.Generic.Dictionary[string, object]]::new()
 $global:dataBatch = [System.Collections.Generic.List[PSCustomObject]]::new()
 $global:IsArmed = $ArmedMode
@@ -133,15 +134,6 @@ function Write-RawJsonl {
     $clean = $Lines | ForEach-Object { if ($_) { ($_ -replace "`r`n", " " -replace "`r", " " -replace "`n", " ").Trim() } }
     [System.IO.File]::AppendAllText($Path, ($clean -join "`r`n") + "`r`n")
 }
-
-# ====================== SIEM ENRICHMENT METADATA ======================
-$activeRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
-if ($activeRoute) {
-    $IpAddress = (Get-NetIPAddress -InterfaceIndex $activeRoute.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress
-}
-if (-not $IpAddress) { $IpAddress = "Unknown" }
-$OsContext = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption -replace 'Microsoft ', ''
-$userStr = "$env:USERDOMAIN\$env:USERNAME".Replace("\", "\\")
 
 # ======================================================================
 # 4. HUD / UI RENDERING
@@ -1337,11 +1329,12 @@ try {
         $CombinedProcessExclusions
     )
 
-    [DeepVisibilitySensor]::HostIP      = if ($global:HostIP)      { $global:HostIP }      else { "0.0.0.0" }
-    [DeepVisibilitySensor]::HostOS      = if ($OsContext)          { $OsContext }          else { "Windows" }
-    [DeepVisibilitySensor]::SensorUser  = if ($global:SensorUser)  { $global:SensorUser }  else { "$env:USERDOMAIN\$env:USERNAME" }
+    [DeepVisibilitySensor]::HostComputerName = $env:COMPUTERNAME
+    [DeepVisibilitySensor]::HostIP           = $IpAddress
+    [DeepVisibilitySensor]::HostOS           = $OsContext
+    [DeepVisibilitySensor]::SensorUser       = $userStr
 
-    Write-Diag "[ENRICHMENT] C# static context injected → IP=$([DeepVisibilitySensor]::HostIP) | OS=$([DeepVisibilitySensor]::HostOS) | User=$([DeepVisibilitySensor]::SensorUser)" "STARTUP"
+    Write-Diag "[ENRICHMENT] Host metadata injected - IP: $IpAddress | OS: $OsContext | User: $userStr" "STARTUP"
 
     foreach ($lineage in $ExtraBenignLineages) {
         if (-not [string]::IsNullOrWhiteSpace($lineage)) {
@@ -1742,26 +1735,27 @@ try {
                         foreach ($alert in $mlResponse.alerts) {
                             if ($alert.reason -eq "HEALTH_OK") { continue }
 
-                            # ──────────────────────────────────────────────────────────────
-                            # FULLY ENRICHED UEBA_AUDIT EVENTS (same format as C#)
-                            # ──────────────────────────────────────────────────────────────
+                            # Safe escaping for CmdLine (same as C# BuildEnrichedJson)
                             $safeCmd = if ($alert.cmd) {
                                 $alert.cmd -replace '\\','\\\\' -replace '"','\\"' -replace "`r`n",' ' -replace "`r",' ' -replace "`n",' '
                             } else { "" }
 
+                            # ──────────────────────────────────────────────────────────────
+                            # FULLY ENRICHED UEBA_AUDIT EVENTS (now matches SIEM + C#)
+                            # ──────────────────────────────────────────────────────────────
                             if ($alert.score -eq -2.0) {
                                 $ruleName = $alert.reason
                                 Add-AlertMessage "GLOBAL SUPPRESSION: '$ruleName' pruned from Kernel." $cDark
                                 [DeepVisibilitySensor]::SuppressSigmaRule($ruleName)
 
-                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`", `"Process`":`"ML_ENGINE`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$global:ComputerName`", `"IP`":`"$global:HostIP`", `"OS`":`"$OsContext`"}"
+                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`", `"Process`":`"ML_ENGINE`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$([DeepVisibilitySensor]::HostComputerName)`", `"IP`":`"$([DeepVisibilitySensor]::HostIP)`", `"OS`":`"$OsContext`"}"
                                 $script:uebaBatch.Add($logObj)
                                 continue
                             }
 
                             if ($alert.score -eq -1.0) {
                                 Add-AlertMessage $alert.reason $cDark
-                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`", `"Cmd`":`"$safeCmd`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$global:ComputerName`", `"IP`":`"$global:HostIP`", `"OS`":`"$OsContext`"}"
+                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`", `"Cmd`":`"$safeCmd`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$([DeepVisibilitySensor]::HostComputerName)`", `"IP`":`"$([DeepVisibilitySensor]::HostIP)`", `"OS`":`"$OsContext`"}"
                                 $script:uebaBatch.Add($logObj)
                                 try { [DeepVisibilitySensor]::SuppressProcessRule($alert.process, $alert.reason) } catch {}
                                 continue
@@ -1769,12 +1763,12 @@ try {
 
                             if ($alert.score -eq 0.0) {
                                 Add-AlertMessage "LEARNING: $($alert.reason)" $cDark
-                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"Learning`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`", `"Cmd`":`"$safeCmd`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$global:ComputerName`", `"IP`":`"$global:HostIP`", `"OS`":`"$OsContext`"}"
+                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"Learning`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`", `"Cmd`":`"$safeCmd`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$([DeepVisibilitySensor]::HostComputerName)`", `"IP`":`"$([DeepVisibilitySensor]::HostIP)`", `"OS`":`"$OsContext`"}"
                                 $script:uebaBatch.Add($logObj)
                                 continue
                             }
 
-                            # High-severity ML anomaly → full active defense path
+                            # High-severity ML anomaly → full active defense path (already enriched)
                             if ($alert.severity -match "CRITICAL|HIGH|WARNING") {
                                 [DeepVisibilitySensor]::TotalAlertsGenerated++
                                 $MitreTag = if ($alert.reason -match "\[(.*?)\]") { $matches[1] } else { "Unknown" }
@@ -1791,7 +1785,7 @@ try {
                                     -TID_Id $alert.tid `
                                     -AttckMapping $MitreTag `
                                     -CommandLine $alert.cmd `
-                                    -RawJson $jsonStr   # already fully enriched by C#
+                                    -RawJson $jsonStr   # already enriched by C#
                             }
                         }
                     }
