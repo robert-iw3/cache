@@ -66,6 +66,9 @@ logman stop "NT Kernel Logger" -ets >$null 2>&1
 # 2. GLOBAL CONSTANTS & PATHS
 # ======================================================================
 
+$global:HostIP = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.InterfaceIndex -ne 1 -and $_.PrefixOrigin -ne "WellKnown" } |
+    Select-Object -First 1).IPAddress ?? "0.0.0.0"
 $Global:ProgData = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
 $global:EnrichmentPrefix = "`"ComputerName`":`"$env:COMPUTERNAME`", `"IP`":`"$IpAddress`", `"OS`":`"$OsContext`", `"SensorUser`":`"$userStr`", "
 $global:ComputerName = $env:COMPUTERNAME
@@ -122,6 +125,13 @@ function Write-Diag([string]$Message, [string]$Level = "INFO") {
         $global:StartupLogs.Add($Message)
         Draw-StartupWindow
     }
+}
+
+function Write-RawJsonl {
+    param([string]$Path, [string[]]$Lines)
+    if ($Lines.Count -eq 0) { return }
+    $clean = $Lines | ForEach-Object { if ($_) { ($_ -replace "`r`n", " " -replace "`r", " " -replace "`n", " ").Trim() } }
+    [System.IO.File]::AppendAllText($Path, ($clean -join "`r`n") + "`r`n")
 }
 
 # ====================== SIEM ENRICHMENT METADATA ======================
@@ -902,15 +912,13 @@ function Get-CompiledSigmaBase64 {
         $lines = Get-Content $file.FullName
         $content = $lines -join "`n"
 
-        # Noise reduction and scope filters
+        # Skip obviously noisy or non-Windows rules
         if ($content -notmatch "product:\s*windows") { continue }
-        if ($content -match "XBAP Execution From Uncommon Locations" -or
-            $content -match "Suspicious Double Extension File Execution" -or
-            $content -match "PresentationHost\.EXE") { continue }
-        if ($content -match "sha256:" -or $content -match "md5:") { continue }
+        if ($content -match "XBAP|Double Extension|PresentationHost") { continue }
+        if ($content -match "sha256:|md5:") { continue }
 
         $title = "Unknown Sigma Rule"
-        $category = "process_creation" # Default fallback
+        $category = "process_creation"
         $ruleTags = @()
         $inAnchorBlock = $false
         $inTagsBlock = $false
@@ -918,35 +926,34 @@ function Get-CompiledSigmaBase64 {
         foreach ($line in $lines) {
             if ($line -match "(?i)^title:\s*(.+)") { $title = $matches[1].Trim(" '`""); continue }
 
-            # Extract Category to route to the correct C# 0-Alloc Search Tree
             if ($line -match "(?i)category:\s*(.+)") {
                 $rawCat = $matches[1].Trim(" '`"").ToLower()
                 if ($rawCat -match "registry") { $category = "registry_event" }
                 elseif ($rawCat -match "file") { $category = "file_event" }
                 elseif ($rawCat -match "image") { $category = "image_load" }
-                elseif ($rawCat -match "network|connection") { $category = "network_connection" }
-                elseif ($rawCat -match "pipe") { $category = "pipe_created" }
                 else { $category = "process_creation" }
                 continue
             }
 
             if ($line -match "(?i)^tags:") { $inTagsBlock = $true; $inAnchorBlock = $false; continue }
-            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|TargetFilename|Details|ScriptBlockText|ImageLoaded|Signature|Image|ParentImage|CommandLine|Image)\|.*?(contains|endswith|startswith|equals|match|regex).*?:(.+)") {
+
+            if ($line -match "(?i)(CommandLine|Query|PipeName|TargetObject|TargetFilename|Details|ScriptBlockText|ImageLoaded|Signature|Image|ParentImage)\|.*?(contains|endswith|startswith|equals).*?:") {
                 $inAnchorBlock = $true; $inTagsBlock = $false; continue
             }
 
             if ($inTagsBlock) {
-                if ($line -match "^\s*-\s*(.+)") {
-                    $val = $matches[1].Trim(" '`"")
-                    if (-not [string]::IsNullOrWhiteSpace($val)) { $ruleTags += $val }
-                } elseif ($line -match "^[a-zA-Z]") { $inTagsBlock = $false }
+                if ($line -match "^\s*-\s*(.+)") { $ruleTags += $matches[1].Trim(" '`"") }
+                elseif ($line -match "^[a-zA-Z]") { $inTagsBlock = $false }
             }
-
-            if (-not $inTagsBlock -and $line -match "^[a-zA-Z]") { $inAnchorBlock = $false }
 
             if ($inAnchorBlock -and $line -match "^\s*-\s*(.+)") {
                 $val = $matches[1].Trim(" '`"")
-                if (-not [string]::IsNullOrWhiteSpace($val) -and $val.Length -gt 3 -and $val -notmatch "(?i)^\.exe$" -and $val -notmatch "(?i)^[a-z]:\\\\?$") {
+                if ($val.Length -ge 8 -and
+                    $val -notmatch "^(powershell|cmd|wscript|cscript|\.exe|\.dll|true|false|1|0)$" -and
+                    $val -notmatch "^[a-z]:\\?$" -and
+                    $val -notmatch "^[0-9]+$" -and
+                    $val -match "[\\/\-\:\;\(\)\{\}\[\]\.\,]" ) {   # must contain at least one special char
+
                     $formattedTitle = if ($ruleTags.Count -gt 0) { "$title [$($ruleTags -join ', ')]" } else { $title }
                     [void]$RuleList.Add(@{ id = $formattedTitle; category = $category; anchor_string = $val })
                 }
@@ -954,7 +961,12 @@ function Get-CompiledSigmaBase64 {
         }
     }
 
-    if ($RuleList.Count -eq 0) { return "" }
+    # Re-add your built-in high-fidelity signatures
+    $BuiltInCmds = @("sekurlsa::logonpasswords", "lsadump::", "privilege::debug", "Invoke-BloodHound", "procdump -ma lsass", "vssadmin delete shadows", "rundll32.*javascript", "regsvr32.*\.sct")
+    foreach ($c in $BuiltInCmds) {
+        [void]$RuleList.Add(@{ id = "Built-in Core TI Signature"; category = "process_creation"; anchor_string = $c })
+    }
+
     $ruleStrings = [System.Collections.Generic.List[string]]::new()
     foreach ($rule in $RuleList) {
         $b64Anchor = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($rule.anchor_string))
@@ -962,8 +974,7 @@ function Get-CompiledSigmaBase64 {
     }
 
     $Payload = $ruleStrings -join "[NEXT]"
-    $Base64Sigma = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Payload))
-    return $Base64Sigma
+    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Payload))
 }
 
 function Invoke-StagingInjection {
@@ -1120,10 +1131,13 @@ function Initialize-SigmaEngine {
 
             if ($inAnchorBlock -and $line -match "^\s*-\s*(.+)") {
                 $val = $matches[1].Trim(" '`"")
-                if (-not [string]::IsNullOrWhiteSpace($val) -and $val.Length -gt 3 -and $val -notmatch "(?i)^\.exe$" -and $val -notmatch "(?i)^[a-z]:\\\\?$") {
+                if ($val.Length -ge 8 -and
+                    $val -notmatch "^(powershell|cmd|wscript|cscript|\.exe|\.dll|true|false|1|0)$" -and
+                    $val -notmatch "^[a-z]:\\?$" -and
+                    $val -notmatch "^[0-9]+$" -and
+                    $val -match "[\\/\-\:\;\(\)\{\}\[\]\.\,]" ) {   # must contain at least one special char
 
                     $formattedTitle = if ($ruleTags.Count -gt 0) { "$title [$($ruleTags -join ', ')]" } else { $title }
-
                     [void]$RuleList.Add(@{ id = $formattedTitle; category = $category; anchor_string = $val })
                 }
             }
@@ -1205,16 +1219,38 @@ function Get-IniContent([string]$filePath) {
     $ini[$currentSection] = @{}
 
     $lines = Get-Content $filePath -ErrorAction Stop
-    foreach ($line in $lines) {
-        $line = $line.Trim()
+    $i = 0
+
+    while ($i -lt $lines.Count) {
+        $line = $lines[$i].Trim()
+        $i++
+
         if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) { continue }
 
         if ($line -match "^\[(.*)\]$") {
             $currentSection = $matches[1].Trim()
             if (-not $ini.ContainsKey($currentSection)) { $ini[$currentSection] = @{} }
-        } elseif ($line -match "^([^=]+)=(.*)$") {
+            continue
+        }
+
+        if ($line -match "^([^=]+)=(.*)$") {
             $key = $matches[1].Trim()
             $val = $matches[2].Trim()
+
+            while ($i -lt $lines.Count) {
+                $nextLine = $lines[$i].Trim()
+                if ($nextLine.StartsWith("#") -or [string]::IsNullOrWhiteSpace($nextLine)) {
+                    $i++; continue
+                }
+                if ($nextLine -match "^[^=]+=") { break }
+                if ($val -match ",$") {
+                    $val += " " + $nextLine
+                    $i++
+                } else {
+                    break
+                }
+            }
+
             $ini[$currentSection][$key] = $val
         }
     }
@@ -1222,7 +1258,7 @@ function Get-IniContent([string]$filePath) {
 }
 
 # ======================================================================
-# 8. MAIN EXECUTION FLOW (the only top-level code)
+# 8. MAIN EXECUTION FLOW
 # ======================================================================
 
 $ConfigPath = Join-Path $ScriptDir "DeepSensor_Config.ini"
@@ -1237,8 +1273,10 @@ if (-not $IniConfig.ContainsKey("RegistryExclusions")) { $IniConfig["RegistryExc
 $BenignADSProcs = ($IniConfig["ProcessExclusions"]["BenignADSProcs"]) -split ",\s*"
 $TrustedNoise   = ($IniConfig["ProcessExclusions"]["TrustedNoise"]) -split ",\s*"
 $BenignExplorerValues = ($IniConfig["RegistryExclusions"]["BenignExplorerValues"]) -split ",\s*"
+$ExtraBenignLineages  = ($IniConfig["ProcessExclusions"]["ExtraBenignLineages"]  ?? "") -split ",\s*"
+$ExtraSuppressedRules = ($IniConfig["ProcessExclusions"]["ExtraSuppressedRules"] ?? "") -split ",\s*"
 
-# Merge ADS and Trusted Noise for the OS Sensor exclusion pipeline
+# Merge everything
 $CombinedProcessExclusions = $BenignADSProcs + $TrustedNoise
 
 $ValidMlBinaryPath = Initialize-Environment
@@ -1298,6 +1336,23 @@ try {
         $BenignExplorerValues,
         $CombinedProcessExclusions
     )
+
+    [DeepVisibilitySensor]::HostIP      = if ($global:HostIP)      { $global:HostIP }      else { "0.0.0.0" }
+    [DeepVisibilitySensor]::HostOS      = if ($OsContext)          { $OsContext }          else { "Windows" }
+    [DeepVisibilitySensor]::SensorUser  = if ($global:SensorUser)  { $global:SensorUser }  else { "$env:USERDOMAIN\$env:USERNAME" }
+
+    Write-Diag "[ENRICHMENT] C# static context injected → IP=$([DeepVisibilitySensor]::HostIP) | OS=$([DeepVisibilitySensor]::HostOS) | User=$([DeepVisibilitySensor]::SensorUser)" "STARTUP"
+
+    foreach ($lineage in $ExtraBenignLineages) {
+        if (-not [string]::IsNullOrWhiteSpace($lineage)) {
+            [DeepVisibilitySensor]::AddBenignLineage($lineage.Trim())
+        }
+    }
+
+    if ($ExtraSuppressedRules.Count -gt 0) {
+        [DeepVisibilitySensor]::SuppressRulesFromConfig($ExtraSuppressedRules)
+        Write-Diag "    [+] Applied $($ExtraSuppressedRules.Count) extra rule suppressions from config.ini" "STARTUP"
+    }
 
     # Inject the startup Sigma JSON Matrix
     if (-not [string]::IsNullOrEmpty($CompiledTI.Base64Sigma)) {
@@ -1680,57 +1735,53 @@ try {
 
                 # INTERCEPT NATIVE RUST ML ALERTS FROM C# FFI
                 if ($jsonStr.StartsWith("[ML_ALERTS]")) {
-                    $mlPayload = $jsonStr.Substring(11)
+                    $mlPayload = $jsonStr.Substring(11).TrimStart('[').TrimEnd(']').Trim()
                     $mlResponse = try { $mlPayload | ConvertFrom-Json } catch { $null }
 
                     if ($mlResponse -and $mlResponse.alerts) {
                         foreach ($alert in $mlResponse.alerts) {
                             if ($alert.reason -eq "HEALTH_OK") { continue }
 
+                            # ──────────────────────────────────────────────────────────────
+                            # FULLY ENRICHED UEBA_AUDIT EVENTS (same format as C#)
+                            # ──────────────────────────────────────────────────────────────
+                            $safeCmd = if ($alert.cmd) {
+                                $alert.cmd -replace '\\','\\\\' -replace '"','\\"' -replace "`r`n",' ' -replace "`r",' ' -replace "`n",' '
+                            } else { "" }
+
                             if ($alert.score -eq -2.0) {
                                 $ruleName = $alert.reason
                                 Add-AlertMessage "GLOBAL SUPPRESSION: '$ruleName' pruned from Kernel." $cDark
                                 [DeepVisibilitySensor]::SuppressSigmaRule($ruleName)
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`"}"
+
+                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"RuleDegraded`", `"Details`":`"Rule '$ruleName' triggered across 5+ unique processes.`", `"Process`":`"ML_ENGINE`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$global:ComputerName`", `"IP`":`"$global:HostIP`", `"OS`":`"$OsContext`"}"
                                 $script:uebaBatch.Add($logObj)
                                 continue
                             }
 
-                            # TEMPORAL UEBA FEEDBACK LOOP
                             if ($alert.score -eq -1.0) {
                                 Add-AlertMessage $alert.reason $cDark
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
+                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"SuppressionLearned`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`", `"Cmd`":`"$safeCmd`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$global:ComputerName`", `"IP`":`"$global:HostIP`", `"OS`":`"$OsContext`"}"
                                 $script:uebaBatch.Add($logObj)
-
-                                # Extract the pure rule name from the Rust reason
-                                # Format: "UEBA SECURED: [T1547.001] RegPersistence | Mode: Automated Baseline."
-                                $ruleName = $alert.reason -replace "^UEBA SECURED: ", "" -replace " \| Mode:.*", ""
-
-                                # INJECT INTO C# UNMANAGED MEMORY DICTIONARY
-                                try { [DeepVisibilitySensor]::SuppressProcessRule($alert.process, $ruleName) } catch {}
+                                try { [DeepVisibilitySensor]::SuppressProcessRule($alert.process, $alert.reason) } catch {}
                                 continue
                             }
 
                             if ($alert.score -eq 0.0) {
                                 Add-AlertMessage "LEARNING: $($alert.reason)" $cDark
-                                $logObj = "{$global:EnrichmentPrefix`"Category`":`"UEBA_Audit`", `"Type`":`"Learning`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`"}"
+                                $logObj = "{`"Category`":`"UEBA_Audit`", `"Type`":`"Learning`", `"Process`":`"$($alert.process)`", `"Details`":`"$($alert.reason)`", `"Cmd`":`"$safeCmd`", `"EventUser`":`"$([DeepVisibilitySensor]::SensorUser)`", `"ComputerName`":`"$global:ComputerName`", `"IP`":`"$global:HostIP`", `"OS`":`"$OsContext`"}"
                                 $script:uebaBatch.Add($logObj)
                                 continue
                             }
 
+                            # High-severity ML anomaly → full active defense path
                             if ($alert.severity -match "CRITICAL|HIGH|WARNING") {
                                 [DeepVisibilitySensor]::TotalAlertsGenerated++
-
-                                $MitreTag = "Unknown"
-                                if ($alert.reason -match "\[(.*?)\]") { $MitreTag = $matches[1] }
-                                elseif ($alert.reason -match "^(T\d{4}(?:\.\d{3})?)") { $MitreTag = $matches[1] }
-
+                                $MitreTag = if ($alert.reason -match "\[(.*?)\]") { $matches[1] } else { "Unknown" }
                                 $confMap = @{ "CRITICAL" = 100; "HIGH" = 90; "WARNING" = 75 }
                                 $conf = if ($confMap.ContainsKey($alert.severity)) { $confMap[$alert.severity] } else { 50 }
+                                $targetObj = if ($alert.destination) { "$($alert.destination):$($alert.port)" } else { $alert.parent }
 
-                                $targetObj = if (-not [string]::IsNullOrEmpty($alert.destination)) { "$($alert.destination):$($alert.port)" } else { $alert.parent }
-
-                                # Add to Unified Pipeline (handles UI, Defense, and JSON generation automatically)
                                 Submit-SensorAlert -Type "ML_Anomaly" `
                                     -TargetObject $targetObj `
                                     -Image $alert.process `
@@ -1740,7 +1791,7 @@ try {
                                     -TID_Id $alert.tid `
                                     -AttckMapping $MitreTag `
                                     -CommandLine $alert.cmd `
-                                    -RawJson $jsonStr
+                                    -RawJson $jsonStr   # already fully enriched by C#
                             }
                         }
                     }
@@ -1795,8 +1846,8 @@ try {
 
         # BATCH SIEM FORWARDING (Actionable Alerts & Active Defense)
         if ($global:dataBatch.Count -gt 0) {
-            $batchOutput = ($global:dataBatch | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`r`n"
-            [System.IO.File]::AppendAllText($LogPath, $batchOutput + "`r`n")
+            $batchLines = $global:dataBatch | ForEach-Object { $_.ToJson() }
+            Write-RawJsonl $LogPath $batchLines
             $global:dataBatch.Clear()
         }
 
@@ -1808,7 +1859,7 @@ try {
 
         # BATCH UEBA FORWARDING (Learning & Suppressions)
         if ($script:uebaBatch.Count -gt 0) {
-            [System.IO.File]::AppendAllText($UebaLogPath, ($script:uebaBatch -join "`r`n") + "`r`n")
+            Write-RawJsonl $UebaLogPath $script:uebaBatch
             $script:uebaBatch.Clear()
         }
 
@@ -1862,16 +1913,16 @@ try {
             Write-Diag "SENSOR BLINDED: ETW thread unresponsive. Initiating auto-recovery." "ERROR"
             Write-Diag "Auto-Recovery: Tearing down dead ETW session..." "INFO"
             try { [DeepVisibilitySensor]::StopSession() } catch {}
-            
+
             Start-Sleep -Seconds 2
-            
+
             Write-Diag "Auto-Recovery: Re-building memory pointers & initializing native ETW session..." "INFO"
-            try { 
-                [DeepVisibilitySensor]::StartSession() 
+            try {
+                [DeepVisibilitySensor]::StartSession()
             } catch {
                 Write-Diag "Auto-Recovery FAILED: $($_.Exception.Message)" "CRITICAL"
             }
-            
+
             $LastHeartbeat = Get-Date
             $LastEventReceived = Get-Date
             $LastHeartbeatWrite = Get-Date

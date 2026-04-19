@@ -82,7 +82,12 @@ public class DeepVisibilitySensor {
 
     private static ConcurrentDictionary<int, string> ProcessCache = new ConcurrentDictionary<int, string>();
     private static ConcurrentDictionary<int, DateTime> ProcessStartTime = new ConcurrentDictionary<int, DateTime>();
+    private static ConcurrentDictionary<int, string> ProcessUserCache = new ConcurrentDictionary<int, string>();
     private static int SensorPid = -1;
+    public static string HostComputerName = "";
+    public static string HostIP = "";
+    public static string HostOS = "";
+    public static string SensorUser = "";
 
     public struct ModuleMap : IComparable<ModuleMap> {
         public string ModuleName;
@@ -126,6 +131,22 @@ public class DeepVisibilitySensor {
     public static void SuppressProcessRule(string process, string ruleName) {
         string key = $"{process.Trim()}|{ruleName.Trim()}";
         SuppressedProcessRules.TryAdd(key, 0);
+    }
+
+    // CONFIG-DRIVEN SUPPRESSION HELPERS (called from launcher)
+    public static void AddBenignLineage(string lineageKey) {
+        if (!string.IsNullOrWhiteSpace(lineageKey)) {
+            BenignLineages.TryAdd(lineageKey.Trim(), 0);
+        }
+    }
+
+    public static void SuppressRulesFromConfig(string[] rules) {
+        if (rules == null) return;
+        foreach (string rule in rules) {
+            if (!string.IsNullOrWhiteSpace(rule)) {
+                SuppressSigmaRule(rule.Trim());
+            }
+        }
     }
 
     public static ConcurrentDictionary<string, libyaraNET.Rules> YaraMatrices = new ConcurrentDictionary<string, libyaraNET.Rules>(StringComparer.OrdinalIgnoreCase);
@@ -407,12 +428,12 @@ public class DeepVisibilitySensor {
 
     private static string JsonEscape(string text) {
         if (string.IsNullOrEmpty(text)) return "";
-        if (_jsonSb == null) _jsonSb = new StringBuilder(Math.Max(text.Length, 256));
+        if (_jsonSb == null) _jsonSb = new StringBuilder(text.Length * 2);
         _jsonSb.Clear();
 
         foreach (char c in text) {
             switch (c) {
-                case '"': _jsonSb.Append("\\\""); break;
+                case '"':  _jsonSb.Append("\\\""); break;
                 case '\\': _jsonSb.Append("\\\\"); break;
                 case '\b': _jsonSb.Append("\\b"); break;
                 case '\f': _jsonSb.Append("\\f"); break;
@@ -432,6 +453,53 @@ public class DeepVisibilitySensor {
         EventQueue.Enqueue($"{{\"Provider\":\"DiagLog\", \"Message\":\"{JsonEscape(msg)}\"}}");
     }
 
+    private static string BuildEnrichedJson(
+        string category, string eventType, string process, string parentProcess,
+        int pid, int parentPid, int tid, string cmdline, string details,
+        string path = "", string extraType = "")
+    {
+        string procLower = process.ToLowerInvariant();
+        string parentLower = parentProcess.ToLowerInvariant();
+        string eventUser = GetEventUser(pid);
+
+        string lineageKey = $"{parentProcess}|{process}";
+        if (BenignLineages.ContainsKey(lineageKey)) return null;
+
+        if (BenignADSProcesses.Contains(procLower) || BenignADSProcesses.Contains(parentLower)) return null;
+
+        if ((procLower == "pwsh.exe" || procLower == "powershell.exe") &&
+            (parentLower.Contains("code") || parentLower.Contains("devenv") || parentLower.Contains("msedge") || parentLower.Contains("explorer"))) return null;
+
+        if (procLower.Contains("visualstudio.code") &&
+            (cmdline.IndexOf("/telemetrysession:", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            cmdline.IndexOf("dotnet.projectsystem", StringComparison.OrdinalIgnoreCase) >= 0)) return null;
+
+        if (procLower == "vssadmin.exe" && cmdline.IndexOf("list shadows", StringComparison.OrdinalIgnoreCase) >= 0 &&
+            parentLower == "wbengine.exe") return null;
+
+        string json = $@"{{
+            ""Category"":""{category}"",
+            ""Type"":""{eventType}"",
+            ""Process"":""{JsonEscape(process)}"",
+            ""Parent"":""{JsonEscape(parentProcess)}"",
+            ""PID"":{pid},
+            ""ParentPID"":{parentPid},
+            ""TID"":{tid},
+            ""Cmd"":""{JsonEscape(cmdline)}"",
+            ""Details"":""{JsonEscape(details)}"",
+            ""Path"":""{JsonEscape(path)}"",
+            ""ComputerName"":""{JsonEscape(HostComputerName)}"",
+            ""IP"":""{JsonEscape(HostIP)}"",
+            ""OS"":""{JsonEscape(HostOS)}"",
+            ""SensorUser"":""{JsonEscape(SensorUser)}"",
+            ""EventUser"":""{JsonEscape(eventUser)}"",
+            ""Destination"":"""",
+            ""Port"":0
+        }}".Replace("\r", "").Replace("\n", "");
+
+        return json;
+    }
+
     // Enables dynamic loading of the Native Rust DLL by PowerShell
     public static void SetLibraryPath(string path) { SetDllDirectory(path); }
 
@@ -440,6 +508,10 @@ public class DeepVisibilitySensor {
     public static void Initialize(string dllPath, int currentPid, string[] tiDrivers, string[] benignExplorerValues, string[] benignADSProcs) {
         _dllPath = dllPath;
         SensorPid = currentPid;
+        HostComputerName = Environment.MachineName;
+        HostIP           = "0.0.0.0";           // fallback instead of "unknown"
+        HostOS           = "Windows";
+        SensorUser       = Environment.UserDomainName + "\\" + Environment.UserName;
 
         try {
             _yaraContext = new libyaraNET.YaraContext();
@@ -935,62 +1007,50 @@ public class DeepVisibilitySensor {
         return ProcessCache.ContainsKey(pid) ? ProcessCache[pid] : pid.ToString();
     }
 
-    // EnqueueAlert with Fingerprinting
+    private static string GetEventUser(int pid) {
+        if (ProcessUserCache.TryGetValue(pid, out string user)) return user;
+
+        try
+        {
+            using (var p = System.Diagnostics.Process.GetProcessById(pid))
+            {
+                user = p.StartInfo.UserName ?? "UNKNOWN";
+                // Better resolution for domain users / SYSTEM
+                if (string.IsNullOrWhiteSpace(user) || user == "UNKNOWN")
+                    user = "NT AUTHORITY\\SYSTEM"; // fallback for service/background
+            }
+        }
+        catch
+        {
+            user = "UNKNOWN";
+        }
+
+        ProcessUserCache.TryAdd(pid, user);
+        return user;
+    }
+
+    // EnqueueAlert with Fingerprinting + Full Config Exclusions
     public static void EnqueueAlert(string category, string eventType, string process, string parentProcess, int pid, int parentPid, int tid, string cmdline, string details) {
         Interlocked.Increment(ref TotalAlertsGenerated);
         if (_mlEnginePtr == IntPtr.Zero) return;
 
-        // 1. PRE-ALERT GATEKEEPER: Drop known benign lineages instantly
-        string lineageKey = $"{parentProcess}|{process}";
-        if (BenignLineages.ContainsKey(lineageKey)) return;
-
-        // 2. FINGERPRINTING: Validate known noisy but benign command structures
-        if (process.Equals("pwsh.exe", StringComparison.OrdinalIgnoreCase)) {
-            // Drop VS Code Editor Services Telemetry
-            if (cmdline.IndexOf("visual studio code host", StringComparison.OrdinalIgnoreCase) >= 0 && cmdline.IndexOf("ms-vscode.powershell", StringComparison.OrdinalIgnoreCase) >= 0) return;
-        }
-
-        if (process.Equals("microsoft.visualstudio.code.servicecontroller.exe", StringComparison.OrdinalIgnoreCase) ||
-            process.Equals("microsoft.visualstudio.code.servicehost.exe", StringComparison.OrdinalIgnoreCase)) {
-            // Drop VS Code .NET / C# Dev Kit Telemetry
-            if (cmdline.IndexOf("/telemetrysession:", StringComparison.OrdinalIgnoreCase) >= 0 || cmdline.IndexOf("dotnet.projectsystem", StringComparison.OrdinalIgnoreCase) >= 0) return;
-        }
-
-        if (process.Equals("vssadmin.exe", StringComparison.OrdinalIgnoreCase)) {
-            // Example: Drop authorized backup service volume shadow copies
-            if (cmdline.IndexOf("list shadows", StringComparison.OrdinalIgnoreCase) >= 0 && parentProcess.Equals("wbengine.exe", StringComparison.OrdinalIgnoreCase)) return;
-        }
-
-        // 3. UNIFIED FFI JSON BUILDER
-        string jsonEvent = $@"{{
-            ""Category"":""{category}"",
-            ""Type"":""{eventType}"",
-            ""Process"":""{JsonEscape(process)}"",
-            ""Parent"":""{JsonEscape(parentProcess)}"",
-            ""PID"":{pid},
-            ""ParentPID"":{parentPid},
-            ""TID"":{tid},
-            ""Cmd"":""{JsonEscape(cmdline)}"",
-            ""Details"":""{JsonEscape(details)}"",
-            ""Destination"":"""",
-            ""Port"":0
-        }}".Replace("\r", "").Replace("\n", "");
+        string jsonEvent = BuildEnrichedJson(category, eventType, process, parentProcess, pid, parentPid, tid, cmdline, details);
+        if (jsonEvent == null) return;   // dropped by exclusion
 
         try {
-            if (!_mlWorkQueue.IsAddingCompleted) { _mlWorkQueue.Add(jsonEvent); }
-        } catch (InvalidOperationException) { /* Safely ignore if the engine is tearing down */ }
+            if (!_mlWorkQueue.IsAddingCompleted) _mlWorkQueue.Add(jsonEvent);
+        } catch (InvalidOperationException) { }
     }
 
     private static void EnqueueRaw(string type, string process, string parent, string path, string cmd, int pid, int tid) {
         Interlocked.Increment(ref TotalEventsParsed);
         if (_mlEnginePtr == IntPtr.Zero) return;
 
-        string jsonEvent = $"{{\"Category\":\"RawEvent\", \"Type\":\"{JsonEscape(type)}\", \"Process\":\"{JsonEscape(process)}\", \"Parent\":\"{JsonEscape(parent)}\", \"PID\":{pid}, \"TID\":{tid}, \"Path\":\"{JsonEscape(path)}\", \"Cmd\":\"{JsonEscape(cmd)}\", \"Destination\":\"\", \"Port\":0}}";
+        string jsonEvent = BuildEnrichedJson("RawEvent", type, process, parent, pid, 0, tid, cmd, "", path, type);
+        if (jsonEvent == null) return;
 
         try {
-            if (!_mlWorkQueue.IsAddingCompleted && _mlEnginePtr != IntPtr.Zero) {
-                _mlWorkQueue.Add(jsonEvent);
-            }
-        } catch (InvalidOperationException) { /* Safely ignore if the engine is tearing down */ }
+            if (!_mlWorkQueue.IsAddingCompleted) _mlWorkQueue.Add(jsonEvent);
+        } catch (InvalidOperationException) { }
     }
 }
